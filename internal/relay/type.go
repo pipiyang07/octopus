@@ -127,6 +127,7 @@ type relayAttempt struct {
 	firstTokenTimeOutSec int
 	firstTokenBudget     *firstTokenBudget
 	retryAfter           time.Duration // forward() 提取后暂存
+	upstreamErrorBody    string
 }
 
 // attemptResult 封装单次尝试的结果
@@ -139,4 +140,5 @@ type attemptResult struct {
 	Err               error         // 失败时的错误
 	StatusCode        int           // 上游 HTTP 状态码（0 = 连接错误）
 	RetryAfter        time.Duration // 解析的 Retry-After 值
+	ErrBody           string        // 原始上游错误体，用于入站协议错误形状转换
 }

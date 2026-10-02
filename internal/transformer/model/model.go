@@ -252,6 +252,10 @@ type InternalLLMRequest struct {
 	// Ref: https://api-docs.deepseek.com/guides/thinking_mode
 	Thinking *ThinkingConfig `json:"thinking,omitempty"`
 
+	// ReasoningSplit is used by gateways that expose reasoning as a separate
+	// output stream controlled by a boolean parameter.
+	ReasoningSplit *bool `json:"reasoning_split,omitempty"`
+
 	// Specifies the processing type used for serving the request.
 	ServiceTier *string `json:"service_tier,omitempty"`
 
@@ -303,6 +307,10 @@ type InternalLLMRequest struct {
 	// TransformerMetadata stores transformer-specific metadata for preserving format during transformations.
 	// This is a help field and will not be sent to the llm service.
 	TransformerMetadata map[string]string `json:"-"`
+
+	// CodexToolContext preserves Codex-native tool identity when Responses is
+	// bridged to Chat Completions. It is internal to the transformer layer.
+	CodexToolContext *CodexToolContext `json:"-"`
 
 	// TransformOptions stores transformer-specific options for preserving request format.
 	// This is a help field and will not be sent to the llm service.

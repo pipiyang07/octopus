@@ -900,6 +900,11 @@
             "wsModePassthrough": "Passthrough",
             "wsModeTransform": "Transform",
             "wsModeOff": "Off",
+            "codexPromptCache": "Codex Prompt Cache",
+            "codexPromptCacheDisabled": "Disabled",
+            "codexPromptCacheAuto": "Auto",
+            "codexPromptCacheEnabled": "Enabled",
+            "codexReasoning": "Codex Reasoning Parameter",
             "matchRegex": "Match Regex",
             "matchRegexPlaceholder": "Optional: regex pattern to match request model names",
             "remark": "Remark"

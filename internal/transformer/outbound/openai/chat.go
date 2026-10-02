@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/bestruirui/octopus/internal/transformer/model"
+	"github.com/tmaxmax/go-sse"
 )
 
 type ChatOutbound struct{}
@@ -46,6 +47,7 @@ type ChatCompletionsRequest struct {
 	Audio               *ChatCompletionsAudio `json:"audio,omitempty"`
 	ReasoningEffort     string                `json:"reasoning_effort,omitempty"`
 	Thinking            *model.ThinkingConfig `json:"thinking,omitempty"`
+	ReasoningSplit      *bool                 `json:"reasoning_split,omitempty"`
 	ServiceTier         *string               `json:"service_tier,omitempty"`
 	Stop                *model.Stop           `json:"stop,omitempty"`
 	Stream              *bool                 `json:"stream,omitempty"`
@@ -182,6 +184,7 @@ func buildChatCompletionsRequest(request *model.InternalLLMRequest) *ChatComplet
 		Modalities:          request.Modalities,
 		ReasoningEffort:     request.ReasoningEffort,
 		Thinking:            request.Thinking,
+		ReasoningSplit:      request.ReasoningSplit,
 		ServiceTier:         request.ServiceTier,
 		Stop:                request.Stop,
 		Stream:              request.Stream,
@@ -267,9 +270,41 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 
 	var resp model.InternalLLMResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
+		if bodyLooksLikeSSE(body) {
+			return aggregateChatSSEBody(body)
+		}
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	return &resp, nil
+}
+
+func bodyLooksLikeSSE(body []byte) bool {
+	trimmed := bytes.TrimSpace(body)
+	return bytes.Contains(trimmed, []byte("data:")) &&
+		(bytes.HasPrefix(trimmed, []byte("data:")) || bytes.Contains(trimmed, []byte("\ndata:")))
+}
+
+func aggregateChatSSEBody(body []byte) (*model.InternalLLMResponse, error) {
+	aggregator := model.StreamAggregator{}
+	for event, err := range sse.Read(bytes.NewReader(body), &sse.ReadConfig{MaxEventSize: 32 * 1024 * 1024}) {
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse upstream SSE body: %w", err)
+		}
+		data := strings.TrimSpace(event.Data)
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var chunk model.InternalLLMResponse
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal upstream SSE chunk: %w", err)
+		}
+		aggregator.Add(&chunk)
+	}
+	response := aggregator.BuildAndReset()
+	if response == nil || !response.IsChatResponse() {
+		return nil, fmt.Errorf("upstream SSE body did not contain chat completion chunks")
+	}
+	return response, nil
 }
 
 func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*model.InternalLLMResponse, error) {

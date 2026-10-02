@@ -259,6 +259,15 @@ func cloneInternalRequest(req *transformerModel.InternalLLMRequest) *transformer
 	cloned.ContextManagement = append([]byte(nil), req.ContextManagement...)
 	cloned.ResponsesStreamOptions = append([]byte(nil), req.ResponsesStreamOptions...)
 	cloned.RawInputItems = append([]byte(nil), req.RawInputItems...)
+	cloned.PromptCacheKey = cloneStringPointer(req.PromptCacheKey)
+	cloned.ResponsesPromptCacheKey = cloneStringPointer(req.ResponsesPromptCacheKey)
+	cloned.ReasoningBudget = cloneInt64Pointer(req.ReasoningBudget)
+	cloned.EnableThinking = cloneBoolPointer(req.EnableThinking)
+	cloned.ReasoningSplit = cloneBoolPointer(req.ReasoningSplit)
+	if req.Thinking != nil {
+		thinking := *req.Thinking
+		cloned.Thinking = &thinking
+	}
 	return &cloned
 }
 
@@ -346,6 +355,14 @@ func cloneStringPointer(value *string) *string {
 }
 
 func cloneBoolPointer(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func cloneInt64Pointer(value *int64) *int64 {
 	if value == nil {
 		return nil
 	}

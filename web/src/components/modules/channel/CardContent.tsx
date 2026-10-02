@@ -46,6 +46,7 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         proxy_mode: channel.proxy_mode ?? 'direct',
         proxy_config_id: channel.proxy_config_id ?? null,
         param_override: channel.param_override ?? '',
+        codex_compat: channel.codex_compat ?? { prompt_cache_routing: 'disabled', reasoning_param: 'reasoning_effort' },
         keys: channel.keys.length > 0
             ? channel.keys.map((k) => ({
                 id: k.id,
@@ -72,6 +73,9 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
     const headersEqual = (a: Channel['custom_header'] | undefined, b: Channel['custom_header'] | undefined) =>
         JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+    const codexCompatEqual = (a: Channel['codex_compat'] | undefined, b: Channel['codex_compat'] | undefined) =>
+        JSON.stringify(a ?? { prompt_cache_routing: 'disabled', reasoning_param: 'reasoning_effort' }) ===
+        JSON.stringify(b ?? { prompt_cache_routing: 'disabled', reasoning_param: 'reasoning_effort' });
 
     const handleUpdate = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -113,6 +117,10 @@ export function CardContent({ channel, stats }: { channel: Channel; stats: Stats
         if (nextParamOverride !== curParamOverride) {
             // Empty string means "clear" for patch semantics; backend maps it to NULL.
             req.param_override = nextParamOverride;
+        }
+
+        if (!codexCompatEqual(formData.codex_compat, channel.codex_compat)) {
+            req.codex_compat = formData.codex_compat;
         }
 
         const nextMatchRegex = formData.match_regex.trim();

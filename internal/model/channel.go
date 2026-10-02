@@ -76,6 +76,7 @@ type Channel struct {
 	CustomHeader  []CustomHeader        `json:"custom_header" gorm:"serializer:json"`
 	WSMode        ChannelWSMode         `json:"ws_mode" gorm:"type:varchar(16);not null;default:'inherit'"`
 	ParamOverride *string               `json:"param_override"`
+	CodexCompat   *CodexCompatConfig    `json:"codex_compat,omitempty" gorm:"serializer:json"`
 	ChannelProxy  *string               `json:"-" gorm:"column:channel_proxy"`
 	Stats         *StatsChannel         `json:"stats,omitempty" gorm:"foreignKey:ChannelID"`
 	MatchRegex    *string               `json:"match_regex"`
@@ -107,6 +108,15 @@ type ManagedChannelSource struct {
 	SiteAccountID   int    `json:"site_account_id"`
 	SiteUserGroupID *int   `json:"site_user_group_id,omitempty"`
 	GroupKey        string `json:"group_key"`
+}
+
+type CodexCompatConfig struct {
+	// PromptCacheRouting is one of auto, enabled, or disabled. Auto only sends
+	// stable cache keys to upstreams known to accept prompt_cache_key.
+	PromptCacheRouting string `json:"prompt_cache_routing,omitempty"`
+	// ReasoningParam selects the Chat-side reasoning knob:
+	// reasoning_effort, thinking, enable_thinking, or reasoning_split.
+	ReasoningParam string `json:"reasoning_param,omitempty"`
 }
 
 type BaseUrl struct {
@@ -153,6 +163,7 @@ type ChannelUpdateRequest struct {
 	WSMode        *ChannelWSMode         `json:"ws_mode,omitempty"`
 	ChannelProxy  *string                `json:"-"`
 	ParamOverride *string                `json:"param_override,omitempty"`
+	CodexCompat   *CodexCompatConfig     `json:"codex_compat,omitempty"`
 	MatchRegex    *string                `json:"match_regex,omitempty"`
 
 	KeysToAdd    []ChannelKeyAddRequest    `json:"keys_to_add,omitempty"`

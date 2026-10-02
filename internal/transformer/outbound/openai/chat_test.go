@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/bestruirui/octopus/internal/transformer/model"
@@ -72,6 +74,35 @@ func TestBuildChatCompletionsRequestUsesExplicitWhitelist(t *testing.T) {
 	audio, ok := payload["audio"].(map[string]any)
 	if !ok || audio["format"] != "mp3" || audio["voice"] != "alloy" {
 		t.Fatalf("expected audio settings to be preserved, got %#v", payload["audio"])
+	}
+}
+
+func TestChatOutboundTransformResponseAggregatesUnlabeledSSEBody(t *testing.T) {
+	body := strings.Join([]string{
+		`: keepalive`,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"hel"}}]}`,
+		``,
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	outbound := &ChatOutbound{}
+	response, err := outbound.TransformResponse(nil, &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	})
+	if err != nil {
+		t.Fatalf("TransformResponse failed: %v", err)
+	}
+	if len(response.Choices) != 1 || response.Choices[0].Message == nil ||
+		response.Choices[0].Message.Content.Content == nil ||
+		*response.Choices[0].Message.Content.Content != "hello" {
+		t.Fatalf("expected aggregated hello response, got %#v", response)
+	}
+	if response.Usage == nil || response.Usage.PromptTokens != 3 || response.Usage.CompletionTokens != 2 {
+		t.Fatalf("expected usage to be retained, got %#v", response.Usage)
 	}
 }
 

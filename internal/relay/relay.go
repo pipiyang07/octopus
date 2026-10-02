@@ -158,6 +158,7 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		rawBody:         rawBody,
 		heartbeat:       hb,
 	}
+	baseInternalRequest := internalRequest
 
 	var lastErr error
 	var lastResult attemptResult
@@ -220,8 +221,11 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 			continue
 		}
 
-		// 设置实际模型
-		internalRequest.Model = item.ModelName
+		// Channel-specific compatibility must not leak into later failover attempts.
+		attemptRequest := cloneInternalRequest(baseInternalRequest)
+		attemptRequest.Model = item.ModelName
+		applyCodexCompat(channel, c.Request.Header, attemptRequest)
+		req.internalRequest = attemptRequest
 
 		log.Debugf("request model %s, mode: %d, forwarding to channel: %s model: %s (attempt %d/%d, sticky=%t)",
 			requestModel, group.Mode, channel.Name, item.ModelName,
@@ -288,10 +292,10 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		// 同通道重试耗尽后记录熔断器失败
 		if !result.Success && !result.Written && !result.Canceled && !result.ResetConversation {
 			failureKind := circuitFailureKind(group.RetryEnabled, result.StatusCode)
-			balancer.RecordFailure(channel.ID, usedKey.ID, internalRequest.Model, failureKind)
+			balancer.RecordFailure(channel.ID, usedKey.ID, req.internalRequest.Model, failureKind)
 			outlierwindow.Report(channel.ID, false, result.StatusCode, time.Now())
 			if failureKind == balancer.FailureHard {
-				maybeLearnManagedRoute(c.Request.Context(), channel.ID, internalRequest.Model, inboundType, result.Err)
+				maybeLearnManagedRoute(c.Request.Context(), channel.ID, req.internalRequest.Model, inboundType, result.Err)
 			}
 		}
 
@@ -371,6 +375,11 @@ func Handler(inboundType inbound.InboundType, c *gin.Context) {
 		return
 	}
 	metrics.SaveWithChannelStats(c.Request.Context(), false, lastErr, iter.Attempts(), false)
+
+	if inboundType == inbound.InboundTypeOpenAIResponse && lastResult.StatusCode > 0 && lastResult.ErrBody != "" {
+		writeResponsesUpstreamError(c, hb, lastResult.StatusCode, lastResult.ErrBody)
+		return
+	}
 
 	// 透传 429/503 状态码和 Retry-After 头，让客户端 SDK 的重试机制接管
 	if isPassthroughStatus(lastResult.StatusCode) {
@@ -470,6 +479,7 @@ func (ra *relayAttempt) attempt() attemptResult {
 		Err:               fmt.Errorf("channel %s failed: %v", ra.channel.Name, fwdErr),
 		StatusCode:        statusCode,
 		RetryAfter:        ra.retryAfter,
+		ErrBody:           ra.upstreamErrorBody,
 	}
 }
 
@@ -809,6 +819,7 @@ func (ra *relayAttempt) forwardViaHTTPPassthrough(ctx context.Context, pt model.
 		ra.retryAfter = parseRetryAfter(response.Header.Get("Retry-After"))
 		body, _ := io.ReadAll(response.Body)
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
+		ra.upstreamErrorBody = string(body)
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
 		return statusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 	}
@@ -893,6 +904,7 @@ func (ra *relayAttempt) forwardViaHTTPStandard(ctx context.Context) (int, error)
 			return response.StatusCode, fmt.Errorf("failed to read response body: %w", err)
 		}
 		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
+		ra.upstreamErrorBody = string(body)
 		log.Warnf("upstream error from channel %s: status=%d, body=%s", ra.channel.Name, response.StatusCode, string(body))
 		return statusCode, fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
 	}

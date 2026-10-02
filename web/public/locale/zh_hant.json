@@ -900,6 +900,11 @@
             "wsModePassthrough": "直通",
             "wsModeTransform": "轉換",
             "wsModeOff": "關閉",
+            "codexPromptCache": "Codex 快取路由",
+            "codexPromptCacheDisabled": "關閉",
+            "codexPromptCacheAuto": "自動",
+            "codexPromptCacheEnabled": "開啟",
+            "codexReasoning": "Codex Reasoning 參數",
             "matchRegex": "匹配正規",
             "matchRegexPlaceholder": "可選：用於匹配請求模型名稱的正規表示式",
             "remark": "備註"

@@ -270,6 +270,10 @@ func ChannelUpdate(req *model.ChannelUpdateRequest, ctx context.Context) (*model
 		selectFields = append(selectFields, "param_override")
 		updates.ParamOverride = req.ParamOverride
 	}
+	if req.CodexCompat != nil {
+		selectFields = append(selectFields, "codex_compat")
+		updates.CodexCompat = req.CodexCompat
+	}
 	if req.MatchRegex != nil {
 		selectFields = append(selectFields, "match_regex")
 		updates.MatchRegex = req.MatchRegex

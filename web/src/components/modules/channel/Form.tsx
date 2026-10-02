@@ -1,4 +1,4 @@
-import { ChannelType, type AutoGroupType, type Channel, type ChannelWSMode, useFetchModel } from '@/api/endpoints/channel';
+import { ChannelType, type AutoGroupType, type Channel, type ChannelWSMode, type CodexCompatConfig, useFetchModel } from '@/api/endpoints/channel';
 import { ProxySelector } from '@/components/modules/proxy-pool/ProxySelector';
 import {
     Select,
@@ -35,6 +35,7 @@ export interface ChannelFormData {
     proxy_mode: Channel['proxy_mode'];
     proxy_config_id: number | null;
     param_override: string;
+    codex_compat: CodexCompatConfig;
     keys: ChannelKeyFormItem[];
     model: string;
     custom_model: string;
@@ -497,6 +498,60 @@ export function ChannelForm({
                                         </SelectContent>
                                     </Select>
                                 </div>
+                            ) : null}
+
+                            {formData.type === ChannelType.OpenAIChat ? (
+                                <>
+                                    <div className="space-y-2">
+                                        <label htmlFor={`${idPrefix}-codex-cache`} className="text-sm font-medium text-card-foreground">
+                                            {t('codexPromptCache')}
+                                        </label>
+                                        <Select
+                                            value={formData.codex_compat.prompt_cache_routing ?? 'disabled'}
+                                            onValueChange={(value) => onFormDataChange({
+                                                ...formData,
+                                                codex_compat: {
+                                                    ...formData.codex_compat,
+                                                    prompt_cache_routing: value as NonNullable<CodexCompatConfig['prompt_cache_routing']>,
+                                                },
+                                            })}
+                                        >
+                                            <SelectTrigger id={`${idPrefix}-codex-cache`} className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="rounded-xl">
+                                                <SelectItem className="rounded-xl" value="disabled">{t('codexPromptCacheDisabled')}</SelectItem>
+                                                <SelectItem className="rounded-xl" value="auto">{t('codexPromptCacheAuto')}</SelectItem>
+                                                <SelectItem className="rounded-xl" value="enabled">{t('codexPromptCacheEnabled')}</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label htmlFor={`${idPrefix}-codex-reasoning`} className="text-sm font-medium text-card-foreground">
+                                            {t('codexReasoning')}
+                                        </label>
+                                        <Select
+                                            value={formData.codex_compat.reasoning_param ?? 'reasoning_effort'}
+                                            onValueChange={(value) => onFormDataChange({
+                                                ...formData,
+                                                codex_compat: {
+                                                    ...formData.codex_compat,
+                                                    reasoning_param: value as NonNullable<CodexCompatConfig['reasoning_param']>,
+                                                },
+                                            })}
+                                        >
+                                            <SelectTrigger id={`${idPrefix}-codex-reasoning`} className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent className="rounded-xl">
+                                                <SelectItem className="rounded-xl" value="reasoning_effort">reasoning_effort</SelectItem>
+                                                <SelectItem className="rounded-xl" value="thinking">thinking</SelectItem>
+                                                <SelectItem className="rounded-xl" value="enable_thinking">enable_thinking</SelectItem>
+                                                <SelectItem className="rounded-xl" value="reasoning_split">reasoning_split</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </>
                             ) : null}
 
                         </div>

@@ -28,6 +28,11 @@ export enum AutoGroupType {
 
 export type ChannelWSMode = 'inherit' | 'off' | 'passthrough' | 'transform';
 
+export type CodexCompatConfig = {
+    prompt_cache_routing?: 'auto' | 'enabled' | 'disabled';
+    reasoning_param?: 'reasoning_effort' | 'thinking' | 'enable_thinking' | 'reasoning_split';
+};
+
 export type BaseUrl = {
     url: string;
     delay: number;
@@ -75,6 +80,7 @@ export type Channel = {
     custom_header: CustomHeader[];
     ws_mode: ChannelWSMode;
     param_override?: string | null;
+    codex_compat?: CodexCompatConfig | null;
     match_regex?: string | null;
     managed: boolean;
     managed_source?: ManagedChannelSource | null;
@@ -106,6 +112,7 @@ export type CreateChannelRequest = {
     custom_header?: CustomHeader[];
     ws_mode?: ChannelWSMode;
     param_override?: string | null;
+    codex_compat?: CodexCompatConfig | null;
     match_regex?: string | null;
 };
 
@@ -127,6 +134,7 @@ export type UpdateChannelRequest = {
     custom_header?: CustomHeader[];
     ws_mode?: ChannelWSMode;
     param_override?: string | null;
+    codex_compat?: CodexCompatConfig | null;
     match_regex?: string | null;
     // keys diff
     keys_to_add?: Array<Pick<ChannelKey, 'enabled' | 'channel_key' | 'remark'>>;

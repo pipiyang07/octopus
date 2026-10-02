@@ -22,6 +22,7 @@ export function CreateDialogContent() {
         proxy_mode: 'direct',
         proxy_config_id: null,
         param_override: '',
+        codex_compat: { prompt_cache_routing: 'disabled', reasoning_param: 'reasoning_effort' },
         keys: [{ enabled: true, channel_key: '', remark: '' }],
         model: '',
         custom_model: '',
@@ -67,6 +68,7 @@ export function CreateDialogContent() {
                 custom_header: normalizedHeaders,
                 ws_mode: formData.ws_mode,
                 param_override: paramOverride,
+                codex_compat: formData.codex_compat,
                 match_regex: formData.match_regex.trim(),
             },
             {
@@ -80,6 +82,7 @@ export function CreateDialogContent() {
                         proxy_mode: 'direct',
                         proxy_config_id: null,
                         param_override: '',
+                        codex_compat: { prompt_cache_routing: 'disabled', reasoning_param: 'reasoning_effort' },
                         keys: [{ enabled: true, channel_key: '', remark: '' }],
                         model: '',
                         custom_model: '',

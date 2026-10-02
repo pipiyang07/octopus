@@ -900,6 +900,11 @@
             "wsModePassthrough": "直通",
             "wsModeTransform": "转换",
             "wsModeOff": "关闭",
+            "codexPromptCache": "Codex 缓存路由",
+            "codexPromptCacheDisabled": "关闭",
+            "codexPromptCacheAuto": "自动",
+            "codexPromptCacheEnabled": "开启",
+            "codexReasoning": "Codex Reasoning 参数",
             "matchRegex": "匹配正则",
             "matchRegexPlaceholder": "可选：用于匹配请求模型名称的正则表达式",
             "remark": "备注"

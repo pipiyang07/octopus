@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/bestruirui/octopus/internal/outlierwindow"
 	"github.com/bestruirui/octopus/internal/relay/balancer"
 	"github.com/bestruirui/octopus/internal/server/resp"
+	"github.com/bestruirui/octopus/internal/transformer/inbound"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
 	"github.com/bestruirui/octopus/internal/transformer/outbound"
 	openaiOutbound "github.com/bestruirui/octopus/internal/transformer/outbound/openai"
@@ -29,6 +31,7 @@ type responsesCompactRequest struct {
 	Model              string          `json:"model"`
 	Input              json.RawMessage `json:"input,omitempty"`
 	PreviousResponseID *string         `json:"previous_response_id,omitempty"`
+	Stream             *bool           `json:"stream,omitempty"`
 }
 
 type responsesCompactResponse struct {
@@ -78,6 +81,25 @@ func HandleResponsesCompact(c *gin.Context) {
 	if err != nil {
 		resp.ErrorWithCode(c, http.StatusNotFound, CodeRelayModelNotFound, "model not found")
 		return
+	}
+
+	// Chat-only upstreams have no server-side Responses history. Resolve the
+	// continuation locally before entering the retry loop so every Chat attempt
+	// can send a self-contained request.
+	compactInbound := inbound.Get(inbound.InboundTypeOpenAIResponse)
+	compactRequest, compactTransformErr := compactInbound.TransformRequest(c.Request.Context(), body)
+	var compactReplayState *wsConversationState
+	if compactTransformErr == nil && compactRequest.RawAPIFormat == transformerModel.APIFormatOpenAIResponse {
+		if prevID := compactRequest.OpenAIPreviousResponseID(); prevID != "" {
+			compactReplayState = resolveResponsesReplayState(apiKeyID, group.ID, requestModel, compactRequest)
+			if compactReplayState != nil {
+				if replayed := compactReplayState.BuildReplayRequest(compactRequest); replayed != nil {
+					compactRequest = replayed
+				} else {
+					compactReplayState = nil
+				}
+			}
+		}
 	}
 
 	iter := balancer.NewIterator(group, apiKeyID, requestModel)
@@ -165,7 +187,11 @@ func HandleResponsesCompact(c *gin.Context) {
 				}
 			}
 
-			statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, body)
+			if channel.Type == outbound.OutboundTypeOpenAIChat {
+				statusCode, retryAfter, attemptErr = forwardResponsesCompactChat(c, metrics, iter, channel, usedKey, item.ModelName, compactInbound, compactRequest, compactTransformErr, compactReplayState)
+			} else {
+				statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, body)
+			}
 			if attemptErr == nil {
 				success = true
 				break
@@ -218,11 +244,118 @@ func HandleResponsesCompact(c *gin.Context) {
 
 func supportsResponsesCompact(channelType outbound.OutboundType) bool {
 	switch channelType {
-	case outbound.OutboundTypeOpenAIResponse:
+	case outbound.OutboundTypeOpenAIResponse, outbound.OutboundTypeOpenAIChat:
 		return true
 	default:
 		return false
 	}
+}
+
+func forwardResponsesCompactChat(
+	c *gin.Context,
+	metrics *RelayMetrics,
+	iter *balancer.Iterator,
+	channel *dbmodel.Channel,
+	usedKey dbmodel.ChannelKey,
+	upstreamModel string,
+	inAdapter interface {
+		TransformResponse(context.Context, *transformerModel.InternalLLMResponse) ([]byte, error)
+	},
+	internalRequest *transformerModel.InternalLLMRequest,
+	transformErr error,
+	replayState *wsConversationState,
+) (int, time.Duration, error) {
+	span := iter.StartAttempt(channel.ID, usedKey.ID, channel.Name)
+	if transformErr != nil {
+		err := fmt.Errorf("failed to transform compact request: %w", transformErr)
+		span.End(dbmodel.AttemptFailed, 0, err.Error())
+		return http.StatusBadRequest, 0, err
+	}
+	if internalRequest == nil {
+		err := errors.New("compact request is empty")
+		span.End(dbmodel.AttemptFailed, 0, err.Error())
+		return http.StatusBadRequest, 0, err
+	}
+	if internalRequest.OpenAIPreviousResponseID() != "" && replayState == nil {
+		err := errors.New("no local replay state for compact continuation")
+		span.End(dbmodel.AttemptSkipped, 0, err.Error())
+		return 0, 0, err
+	}
+	if !internalRequest.IsChatRequest() {
+		err := errors.New("compact request cannot be converted to a self-contained chat request")
+		span.End(dbmodel.AttemptSkipped, 0, err.Error())
+		return 0, 0, err
+	}
+
+	request := *internalRequest
+	request.Model = upstreamModel
+	request.Stream = boolPtr(false)
+	request.StreamOptions = nil
+
+	chatOutbound := openaiOutbound.ChatOutbound{}
+	upstreamRequest, err := chatOutbound.TransformRequest(c.Request.Context(), &request, channel.GetBaseUrl(), usedKey.ChannelKey)
+	if err != nil {
+		err = fmt.Errorf("failed to create compact chat request: %w", err)
+		span.End(dbmodel.AttemptFailed, 0, err.Error())
+		return 0, 0, err
+	}
+	copyProxyHeaders(c.Request.Header, channel, upstreamRequest.Header)
+
+	response, err := sendCompactRequest(channel, upstreamRequest)
+	if err != nil {
+		err = fmt.Errorf("failed to send compact chat request: %w", err)
+		span.End(dbmodel.AttemptFailed, 0, err.Error())
+		return 0, 0, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			body = nil
+		}
+		retryAfter := parseRetryAfter(response.Header.Get("Retry-After"))
+		statusCode := normalizeUpstreamStatusCode(response.StatusCode, string(body))
+		err = fmt.Errorf("upstream error: %d: %s", response.StatusCode, string(body))
+		span.End(dbmodel.AttemptFailed, statusCode, err.Error())
+		return statusCode, retryAfter, err
+	}
+
+	internalResponse, err := chatOutbound.TransformResponse(c.Request.Context(), response)
+	if err != nil {
+		span.End(dbmodel.AttemptFailed, response.StatusCode, err.Error())
+		return response.StatusCode, 0, fmt.Errorf("failed to transform compact chat response: %w", err)
+	}
+	responsesBody, err := inAdapter.TransformResponse(c.Request.Context(), internalResponse)
+	if err != nil {
+		span.End(dbmodel.AttemptFailed, response.StatusCode, err.Error())
+		return response.StatusCode, 0, fmt.Errorf("failed to convert compact chat response to responses: %w", err)
+	}
+
+	var compactResponse responsesCompactResponse
+	if err := json.Unmarshal(responsesBody, &compactResponse); err != nil {
+		span.End(dbmodel.AttemptFailed, response.StatusCode, err.Error())
+		return response.StatusCode, 0, fmt.Errorf("failed to decode converted compact response: %w", err)
+	}
+	compactResponse.Object = "response.compaction"
+	if compactResponse.ID == "" {
+		compactResponse.ID = internalResponse.ID
+	}
+	clientBody, err := json.Marshal(compactResponse)
+	if err != nil {
+		span.End(dbmodel.AttemptFailed, response.StatusCode, err.Error())
+		return response.StatusCode, 0, fmt.Errorf("failed to marshal converted compact response: %w", err)
+	}
+
+	copyProxyResponseHeaders(c.Writer.Header(), response.Header)
+	contentType := response.Header.Get("Content-Type")
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/json"
+	}
+	c.Data(http.StatusOK, contentType, clientBody)
+	metrics.SetInternalResponse(internalResponse, metrics.RequestModel)
+	span.End(dbmodel.AttemptSuccess, response.StatusCode, "")
+	return response.StatusCode, 0, nil
 }
 
 func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balancer.Iterator, channel *dbmodel.Channel, usedKey dbmodel.ChannelKey, requestBody []byte) (int, time.Duration, error) {

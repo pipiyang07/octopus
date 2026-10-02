@@ -59,6 +59,10 @@ type ResponseInbound struct {
 	// Usage tracking
 	usage *model.Usage
 
+	// codexTools preserves Codex-native tool identity across the
+	// Responses -> Chat -> Responses round trip.
+	codexTools *model.CodexToolContext
+
 	// completedOutputItems buffers every ResponsesItem emitted during streaming
 	// (message / reasoning / function_call) so the terminal response.completed
 	// event can echo the full output array. Upstream Responses clients treat
@@ -81,8 +85,19 @@ func (i *ResponseInbound) TransformRequest(ctx context.Context, body []byte) (*m
 	}
 
 	i.truncation = req.Truncation
+	var rawRequest struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &rawRequest); err == nil {
+		req.RawTools = rawRequest.Tools
+	}
 
-	return convertToInternalRequest(&req)
+	internalReq, err := convertToInternalRequest(&req)
+	if err != nil {
+		return nil, err
+	}
+	i.codexTools = internalReq.CodexToolContext
+	return internalReq, nil
 }
 
 func (i *ResponseInbound) TransformResponse(ctx context.Context, response *model.InternalLLMResponse) ([]byte, error) {
@@ -94,7 +109,7 @@ func (i *ResponseInbound) TransformResponse(ctx context.Context, response *model
 	i.storedResponse = response
 
 	// Convert to Responses API format
-	resp := convertToResponsesAPIResponse(response)
+	resp := convertToResponsesAPIResponse(response, i.codexTools)
 	if i.truncation != nil {
 		resp.Truncation = i.truncation
 	}
@@ -526,18 +541,13 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 				itemID = generateItemID()
 			}
 
-			item := &ResponsesItem{
-				ID:     itemID,
-				Type:   "function_call",
-				Status: lo.ToPtr("in_progress"),
-				CallID: tc.ID,
-				Name:   tc.Function.Name,
-			}
+			item := responsesItemForToolCall(tc, "in_progress", i.codexTools)
+			item.ID = itemID
 
 			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
 				Type:        "response.output_item.added",
 				OutputIndex: lo.ToPtr(i.outputIndex),
-				Item:        item,
+				Item:        &item,
 			}))
 
 			i.toolCallItemStarted[toolCallIndex] = true
@@ -550,7 +560,11 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 		i.toolCalls[toolCallIndex].Function.Arguments += tc.Function.Arguments
 
 		// Emit function_call_arguments.delta
-		if tc.Function.Arguments != "" {
+		isCustomTool := false
+		if spec, ok := i.codexTools.Lookup(tc.Function.Name); ok && spec.Kind == model.CodexToolKindCustom {
+			isCustomTool = true
+		}
+		if tc.Function.Arguments != "" && !isCustomTool {
 			itemID := i.toolCalls[toolCallIndex].ID
 			if itemID == "" {
 				itemID = i.currentItemID
@@ -797,24 +811,39 @@ func (i *ResponseInbound) closeCurrentOutputItem() [][]byte {
 				itemID = i.currentItemID
 			}
 
-			// Emit function_call_arguments.done
+			isCustomTool := false
+			if spec, ok := i.codexTools.Lookup(tc.Function.Name); ok && spec.Kind == model.CodexToolKindCustom {
+				isCustomTool = true
+			}
 			toolCallOutputIdx := i.toolCallOutputIndex[idx]
-			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-				Type:        "response.function_call_arguments.done",
-				ItemID:      &itemID,
-				OutputIndex: &toolCallOutputIdx,
-				Arguments:   tc.Function.Arguments,
-			}))
+			if isCustomTool {
+				input := codexCustomInputFromChatArguments(tc.Function.Arguments)
+				if input != "" {
+					events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
+						Type:        "response.custom_tool_call_input.delta",
+						ItemID:      &itemID,
+						OutputIndex: &toolCallOutputIdx,
+						Delta:       input,
+					}))
+				}
+				events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
+					Type:        "response.custom_tool_call_input.done",
+					ItemID:      &itemID,
+					OutputIndex: &toolCallOutputIdx,
+					Input:       input,
+				}))
+			} else {
+				events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
+					Type:        "response.function_call_arguments.done",
+					ItemID:      &itemID,
+					OutputIndex: &toolCallOutputIdx,
+					Arguments:   tc.Function.Arguments,
+				}))
+			}
 
 			// Emit output_item.done
-			item := ResponsesItem{
-				ID:        itemID,
-				Type:      "function_call",
-				Status:    lo.ToPtr("completed"),
-				CallID:    tc.ID,
-				Name:      tc.Function.Name,
-				Arguments: tc.Function.Arguments,
-			}
+			item := responsesItemForToolCall(*tc, "completed", i.codexTools)
+			item.ID = itemID
 
 			events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
 				Type:        "response.output_item.done",
@@ -859,10 +888,23 @@ func (i *ResponseInbound) finalOutputItems() []ResponsesItem {
 // For streaming: aggregates all stored stream chunks into a complete response
 // For non-streaming: returns the stored response
 func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.InternalLLMResponse, error) {
+	var response *model.InternalLLMResponse
 	if i.storedResponse != nil {
-		return i.storedResponse, nil
+		response = i.storedResponse
+	} else {
+		response = i.streamAggregator.BuildAndReset()
 	}
-	return i.streamAggregator.BuildAndReset(), nil
+	if response == nil {
+		return nil, nil
+	}
+	// Preserve the protocol-native output for HTTP replay. This is especially
+	// important when Chat was bridged to Responses: the raw Chat choices alone
+	// cannot rebuild Codex custom/namespace/tool_search items on the next turn.
+	converted := convertToResponsesAPIResponse(response, i.codexTools)
+	if rawOutput, err := json.Marshal(converted.Output); err == nil {
+		response.RawResponsesOutputItems = rawOutput
+	}
+	return response, nil
 }
 
 // formatSSEData formats data as SSE data line
@@ -904,6 +946,10 @@ type ResponsesRequest struct {
 	Conversation         json.RawMessage `json:"conversation,omitempty"`
 	ContextManagement    json.RawMessage `json:"context_management,omitempty"`
 	StreamOptions        json.RawMessage `json:"stream_options,omitempty"`
+
+	// RawTools preserves the original tool definitions for Codex tool types
+	// that are not representable by ResponsesTool alone.
+	RawTools []json.RawMessage `json:"-"`
 }
 
 type ResponsesInput struct {
@@ -933,6 +979,9 @@ func (i *ResponsesInput) UnmarshalJSON(data []byte) error {
 }
 
 type ResponsesItem struct {
+	// RawItem preserves the exact item bytes for lossless tool-result replay.
+	RawItem json.RawMessage `json:"-"`
+
 	ID       string          `json:"id,omitempty"`
 	Type     string          `json:"type,omitempty"`
 	Role     string          `json:"role,omitempty"`
@@ -947,12 +996,16 @@ type ResponsesItem struct {
 	Annotations *[]ResponsesAnnotation `json:"annotations,omitempty"`
 
 	// Function call fields
-	CallID    string `json:"call_id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
+	CallID    string            `json:"call_id,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Namespace *string           `json:"namespace,omitempty"`
+	Arguments json.RawMessage   `json:"arguments,omitempty"`
+	Input     json.RawMessage   `json:"input,omitempty"`
+	Execution string            `json:"execution,omitempty"`
+	Tools     []json.RawMessage `json:"tools,omitempty"`
 
 	// Function call output
-	Output        *ResponsesInput `json:"output,omitempty"`
+	RawOutput     json.RawMessage `json:"output,omitempty"`
 	ItemReference *string         `json:"item_reference,omitempty"`
 
 	// Image generation fields
@@ -978,6 +1031,17 @@ type ResponsesItem struct {
 	// InputAudio carries the `input_audio` nested object for audio inputs.
 	// O-H6.
 	InputAudio *ResponsesInputAudio `json:"input_audio,omitempty"`
+}
+
+func (item *ResponsesItem) UnmarshalJSON(data []byte) error {
+	type Alias ResponsesItem
+	var alias Alias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*item = ResponsesItem(alias)
+	item.RawItem = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 // ResponsesInputAudio mirrors OpenAI's `input_audio` content shape used for
@@ -1051,9 +1115,10 @@ type ResponsesTool struct {
 }
 
 type ResponsesToolChoice struct {
-	Mode *string `json:"mode,omitempty"`
-	Type *string `json:"type,omitempty"`
-	Name *string `json:"name,omitempty"`
+	Mode      *string `json:"mode,omitempty"`
+	Type      *string `json:"type,omitempty"`
+	Name      *string `json:"name,omitempty"`
+	Namespace *string `json:"namespace,omitempty"`
 }
 
 func (t *ResponsesToolChoice) UnmarshalJSON(data []byte) error {
@@ -1135,6 +1200,7 @@ type ResponsesStreamEvent struct {
 	Name           string                `json:"name,omitempty"`
 	CallID         string                `json:"call_id,omitempty"`
 	Arguments      string                `json:"arguments,omitempty"`
+	Input          string                `json:"input,omitempty"`
 	SummaryIndex   *int                  `json:"summary_index,omitempty"`
 	Part           *ResponsesContentPart `json:"part,omitempty"`
 }
@@ -1174,6 +1240,9 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 	}
 	markOpenAIResponsesPassthroughIfNeeded(req, chatReq)
 
+	codexTools := buildCodexToolContext(req)
+	chatReq.CodexToolContext = codexTools
+
 	var reasoningSummary *string
 	var reasoningGenerateSummary *string
 
@@ -1211,7 +1280,7 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 
 	// Convert tool choice
 	if req.ToolChoice != nil {
-		chatReq.ToolChoice = convertToolChoiceToInternal(req.ToolChoice)
+		chatReq.ToolChoice = convertToolChoiceToInternal(req.ToolChoice, codexTools)
 	}
 
 	// Convert instructions to system message
@@ -1234,12 +1303,8 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 	chatReq.Messages = messages
 
 	// Convert tools
-	if len(req.Tools) > 0 {
-		tools, err := convertToolsToInternal(req.Tools)
-		if err != nil {
-			return nil, err
-		}
-		chatReq.Tools = tools
+	if len(codexTools.Tools) > 0 {
+		chatReq.Tools = codexTools.Tools
 	}
 
 	// Convert text format
@@ -1261,6 +1326,29 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 	return chatReq, nil
 }
 
+func buildCodexToolContext(req *ResponsesRequest) *model.CodexToolContext {
+	rawTools := append([]json.RawMessage(nil), req.RawTools...)
+	if len(rawTools) == 0 {
+		for _, tool := range req.Tools {
+			if raw, err := json.Marshal(tool); err == nil {
+				rawTools = append(rawTools, raw)
+			}
+		}
+	}
+
+	rawItems := make([]json.RawMessage, 0, len(req.Input.Items))
+	for _, item := range req.Input.Items {
+		if len(item.RawItem) > 0 {
+			rawItems = append(rawItems, item.RawItem)
+			continue
+		}
+		if raw, err := json.Marshal(item); err == nil {
+			rawItems = append(rawItems, raw)
+		}
+	}
+	return model.BuildCodexToolContext(rawTools, rawItems)
+}
+
 func markOpenAIResponsesPassthroughIfNeeded(req *ResponsesRequest, chatReq *model.InternalLLMRequest) {
 	if req == nil || chatReq == nil {
 		return
@@ -1276,7 +1364,7 @@ func markOpenAIResponsesPassthroughIfNeeded(req *ResponsesRequest, chatReq *mode
 func firstUnsupportedResponsesToolType(tools []ResponsesTool) string {
 	for _, tool := range tools {
 		switch tool.Type {
-		case "function", "image_generation":
+		case "function", "custom", "tool_search", "namespace", "image_generation":
 			continue
 		case "":
 			return "<empty>"
@@ -1304,15 +1392,17 @@ func firstUnsupportedResponsesTopLevelItemType(item *ResponsesItem) string {
 		return ""
 	}
 	switch item.Type {
-	case "", "message", "input_text", "input_image", "input_file", "input_audio", "function_call", "function_call_output", "reasoning":
+	case "", "message", "input_text", "input_image", "input_file", "input_audio", "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output":
 	default:
 		return item.Type
 	}
 	if unsupported := firstUnsupportedResponsesContentItemType(item.Content); unsupported != "" {
 		return unsupported
 	}
-	if unsupported := firstUnsupportedResponsesContentItemType(item.Output); unsupported != "" {
-		return unsupported
+	if output, err := parseResponsesInput(item.RawOutput); err == nil {
+		if unsupported := firstUnsupportedResponsesContentItemType(output); unsupported != "" {
+			return unsupported
+		}
 	}
 	return ""
 }
@@ -1334,7 +1424,7 @@ func firstUnsupportedResponsesContentItemType(input *ResponsesInput) string {
 	return ""
 }
 
-func convertToolChoiceToInternal(src *ResponsesToolChoice) *model.ToolChoice {
+func convertToolChoiceToInternal(src *ResponsesToolChoice, tools *model.CodexToolContext) *model.ToolChoice {
 	if src == nil {
 		return nil
 	}
@@ -1342,14 +1432,24 @@ func convertToolChoiceToInternal(src *ResponsesToolChoice) *model.ToolChoice {
 	result := &model.ToolChoice{}
 	if src.Mode != nil {
 		result.ToolChoice = src.Mode
-	} else if src.Type != nil && src.Name != nil {
+	} else if src.Type != nil {
 		name := *src.Name
+		namespace := ""
+		if src.Namespace != nil {
+			namespace = *src.Namespace
+		}
+		if tools != nil {
+			name = tools.ChatNameForResponseFunction(name, namespace)
+		}
 		result.NamedToolChoice = &model.NamedToolChoice{
 			Type: *src.Type,
 			Function: &model.ToolFunction{
 				Name: name,
 			},
 			Name: &name,
+		}
+		if *src.Type == "custom" || *src.Type == "tool_search" {
+			result.NamedToolChoice.Type = "function"
 		}
 	}
 	return result
@@ -1433,17 +1533,73 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 					Type: "function",
 					Function: model.FunctionCall{
 						Name:      item.Name,
-						Arguments: item.Arguments,
+						Arguments: rawJSONString(item.Arguments),
+					},
+				},
+			},
+		}, nil
+
+	case "custom_tool_call":
+		input := "null"
+		if len(item.Input) > 0 {
+			input = string(item.Input)
+		}
+		arguments, _ := json.Marshal(map[string]json.RawMessage{
+			"input": json.RawMessage(input),
+		})
+		return &model.Message{
+			Role: "assistant",
+			ToolCalls: []model.ToolCall{
+				{
+					ID:   item.CallID,
+					Type: "function",
+					Function: model.FunctionCall{
+						Name:      item.Name,
+						Arguments: string(arguments),
+					},
+				},
+			},
+		}, nil
+
+	case "tool_search_call":
+		arguments := rawJSONString(item.Arguments)
+		if arguments == "" {
+			arguments = "{}"
+		}
+		return &model.Message{
+			Role: "assistant",
+			ToolCalls: []model.ToolCall{
+				{
+					ID:   item.CallID,
+					Type: "function",
+					Function: model.FunctionCall{
+						Name:      "tool_search",
+						Arguments: arguments,
 					},
 				},
 			},
 		}, nil
 
 	case "function_call_output":
+		output, err := parseResponsesInput(item.RawOutput)
+		if err != nil {
+			return nil, err
+		}
 		return &model.Message{
 			Role:       "tool",
 			ToolCallID: lo.ToPtr(item.CallID),
-			Content:    convertInputToMessageContent(*item.Output),
+			Content:    convertInputToMessageContent(*output),
+		}, nil
+
+	case "custom_tool_call_output", "tool_search_output":
+		content := ""
+		if len(item.RawItem) > 0 {
+			content = string(item.RawItem)
+		}
+		return &model.Message{
+			Role:       "tool",
+			ToolCallID: lo.ToPtr(item.CallID),
+			Content:    model.MessageContent{Content: lo.ToPtr(content)},
 		}, nil
 
 	case "reasoning":
@@ -1469,6 +1625,28 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 	default:
 		return nil, nil
 	}
+}
+
+func rawJSONString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	return string(raw)
+}
+
+func parseResponsesInput(raw json.RawMessage) (*ResponsesInput, error) {
+	if len(raw) == 0 {
+		return &ResponsesInput{}, nil
+	}
+	var input ResponsesInput
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil, fmt.Errorf("invalid responses output: %w", err)
+	}
+	return &input, nil
 }
 
 func convertInputToMessageContent(input ResponsesInput) model.MessageContent {
@@ -1600,7 +1778,7 @@ func convertToolsToInternal(tools []ResponsesTool) ([]model.Tool, error) {
 	return result, nil
 }
 
-func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesResponse {
+func convertToResponsesAPIResponse(resp *model.InternalLLMResponse, tools *model.CodexToolContext) *ResponsesResponse {
 	result := &ResponsesResponse{
 		Object:    "response",
 		ID:        resp.ID,
@@ -1644,14 +1822,7 @@ func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesRe
 		// Handle tool calls
 		if len(message.ToolCalls) > 0 {
 			for _, toolCall := range message.ToolCalls {
-				result.Output = append(result.Output, ResponsesItem{
-					ID:        toolCall.ID,
-					Type:      "function_call",
-					CallID:    toolCall.ID,
-					Name:      toolCall.Function.Name,
-					Arguments: toolCall.Function.Arguments,
-					Status:    lo.ToPtr("completed"),
-				})
+				result.Output = append(result.Output, responsesItemForToolCall(toolCall, "completed", tools))
 			}
 		}
 
@@ -1738,6 +1909,91 @@ func convertToResponsesAPIResponse(resp *model.InternalLLMResponse) *ResponsesRe
 	}
 
 	return result
+}
+
+func responsesItemForToolCall(toolCall model.ToolCall, status string, tools *model.CodexToolContext) ResponsesItem {
+	callID := toolCall.ID
+	spec, hasSpec := tools.Lookup(toolCall.Function.Name)
+	if !hasSpec {
+		return ResponsesItem{
+			ID:        "fc_" + callID,
+			Type:      "function_call",
+			CallID:    callID,
+			Name:      toolCall.Function.Name,
+			Arguments: completedToolArguments(status, toolCall.Function.Arguments),
+			Status:    lo.ToPtr(status),
+		}
+	}
+
+	switch spec.Kind {
+	case model.CodexToolKindToolSearch:
+		arguments := completedToolArguments(status, toolCall.Function.Arguments)
+		var parsed map[string]any
+		if err := json.Unmarshal(arguments, &parsed); err != nil {
+			parsed = map[string]any{"query": toolCall.Function.Arguments}
+		}
+		if raw, err := json.Marshal(parsed); err == nil {
+			arguments = raw
+		}
+		return ResponsesItem{
+			Type:      "tool_search_call",
+			CallID:    callID,
+			Status:    lo.ToPtr(status),
+			Execution: "client",
+			Arguments: arguments,
+		}
+	case model.CodexToolKindCustom:
+		input := codexCustomInputFromChatArguments(toolCall.Function.Arguments)
+		inputJSON, _ := json.Marshal(input)
+		return ResponsesItem{
+			ID:     "ctc_" + callID,
+			Type:   "custom_tool_call",
+			CallID: callID,
+			Name:   spec.Name,
+			Input:  inputJSON,
+			Status: lo.ToPtr(status),
+		}
+	default:
+		item := ResponsesItem{
+			ID:        "fc_" + callID,
+			Type:      "function_call",
+			CallID:    callID,
+			Name:      spec.Name,
+			Arguments: completedToolArguments(status, toolCall.Function.Arguments),
+			Status:    lo.ToPtr(status),
+		}
+		if spec.Namespace != "" {
+			item.Namespace = lo.ToPtr(spec.Namespace)
+		}
+		return item
+	}
+}
+
+func completedToolArguments(status, arguments string) json.RawMessage {
+	if status != "completed" || strings.TrimSpace(arguments) == "" {
+		return nil
+	}
+	if json.Valid([]byte(arguments)) {
+		return json.RawMessage(arguments)
+	}
+	raw, err := json.Marshal(arguments)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func codexCustomInputFromChatArguments(arguments string) string {
+	if strings.TrimSpace(arguments) == "" {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(arguments), &parsed); err == nil {
+		if input, ok := parsed["input"].(string); ok {
+			return input
+		}
+	}
+	return arguments
 }
 
 func convertUsageToResponses(usage *model.Usage) *ResponsesUsage {

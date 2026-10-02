@@ -128,7 +128,7 @@ func TestConvertToResponsesAPIResponsePreservesRefusalContent(t *testing.T) {
 		}},
 	}
 
-	out := convertToResponsesAPIResponse(resp)
+	out := convertToResponsesAPIResponse(resp, nil)
 	if len(out.Output) != 1 {
 		t.Fatalf("expected 1 output item, got %d", len(out.Output))
 	}
