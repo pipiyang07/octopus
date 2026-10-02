@@ -2005,7 +2005,7 @@ func responsesItemForToolCall(toolCall model.ToolCall, status string, tools *mod
 			Type:      "function_call",
 			CallID:    callID,
 			Name:      toolCall.Function.Name,
-			Arguments: completedToolArguments(status, toolCall.Function.Arguments),
+			Arguments: completedFunctionCallArguments(status, toolCall.Function.Arguments),
 			Status:    lo.ToPtr(status),
 		}
 	}
@@ -2044,7 +2044,7 @@ func responsesItemForToolCall(toolCall model.ToolCall, status string, tools *mod
 			Type:      "function_call",
 			CallID:    callID,
 			Name:      spec.Name,
-			Arguments: completedToolArguments(status, toolCall.Function.Arguments),
+			Arguments: completedFunctionCallArguments(status, toolCall.Function.Arguments),
 			Status:    lo.ToPtr(status),
 		}
 		if spec.Namespace != "" {
@@ -2052,6 +2052,17 @@ func responsesItemForToolCall(toolCall model.ToolCall, status string, tools *mod
 		}
 		return item
 	}
+}
+
+func completedFunctionCallArguments(status, arguments string) json.RawMessage {
+	if status != "completed" || strings.TrimSpace(arguments) == "" {
+		return nil
+	}
+	raw, err := json.Marshal(arguments)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 func completedToolArguments(status, arguments string) json.RawMessage {

@@ -168,6 +168,13 @@ func TestResponsesInboundRestoresCodexToolCallsFromChat(t *testing.T) {
 	if namespaced.Namespace == nil || *namespaced.Namespace != "mcp__codex_apps__gmail" {
 		t.Fatalf("expected namespace to be restored, got %#v", namespaced.Namespace)
 	}
+	var argumentsText string
+	if err := json.Unmarshal(namespaced.Arguments, &argumentsText); err != nil {
+		t.Fatalf("function_call arguments must stay a JSON string, got %v", err)
+	}
+	if argumentsText != `{"query":"unread"}` {
+		t.Fatalf("unexpected namespace function arguments: %q", argumentsText)
+	}
 }
 
 func TestResponsesInboundConvertsAndRestoresCustomTool(t *testing.T) {
