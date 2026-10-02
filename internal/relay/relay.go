@@ -783,9 +783,19 @@ func (ra *relayAttempt) forwardViaHTTP(ctx context.Context) (int, error) {
 // forwardViaHTTPPassthrough handles unified passthrough for any PassthroughCapable transformer.
 func (ra *relayAttempt) forwardViaHTTPPassthrough(ctx context.Context, pt model.PassthroughCapable) (int, error) {
 	// Build request via TransformRequestRaw
+	requestBody := ra.rawBody
+	if needsXAIResponsesCompat(ra.channel) {
+		rewritten, restoreMap, compatErr := prepareXAIResponsesRequestBody(requestBody)
+		if compatErr != nil {
+			return 0, fmt.Errorf("failed to prepare xAI responses request: %w", compatErr)
+		}
+		requestBody = rewritten
+		ra.xaiResponsesCompat = true
+		ra.xaiResponsesRestore = restoreMap
+	}
 	outboundRequest, err := pt.TransformRequestRaw(
 		ctx,
-		ra.rawBody,
+		requestBody,
 		ra.internalRequest.Model,
 		ra.channel.GetBaseUrl(),
 		ra.usedKey.ChannelKey,
@@ -842,6 +852,9 @@ func (ra *relayAttempt) handleResponsePassthrough(ctx context.Context, response 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
+	}
+	if ra.xaiResponsesCompat {
+		body = restoreXAIResponsesBody(body, ra.xaiResponsesRestore)
 	}
 
 	contentType := response.Header.Get("Content-Type")
@@ -1144,11 +1157,19 @@ func (ra *relayAttempt) handleStreamResponsePassthroughV2(ctx context.Context, r
 
 	// Buffer for raw stream (for metrics collection)
 	var rawStreamBuf bytes.Buffer
+	var streamSource stream.StreamSource = stream.NewRawSource(response.Body, 32*1024)
+	var streamTransform stream.StreamTransform
+	if ra.xaiResponsesCompat {
+		streamSource = stream.NewSSEBlockSource(response.Body, maxSSEEventSize)
+		streamTransform = func(ctx context.Context, data []byte) ([]byte, error) {
+			return rewriteXAIResponsesSSEBlock(data, ra.xaiResponsesRestore), nil
+		}
+	}
 
 	// Create StreamProcessor
 	processor := stream.NewStreamProcessor(stream.StreamConfig{
-		Source:            stream.NewRawSource(response.Body, 32*1024),
-		Transform:         nil, // Passthrough: no transformation
+		Source:            streamSource,
+		Transform:         streamTransform, // nil for normal passthrough
 		Writer:            ra.getStreamWriter(),
 		Context:           ctx,
 		FirstTokenTimeout: firstTokenTimeout,

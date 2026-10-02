@@ -128,6 +128,8 @@ type relayAttempt struct {
 	firstTokenBudget     *firstTokenBudget
 	retryAfter           time.Duration // forward() 提取后暂存
 	upstreamErrorBody    string
+	xaiResponsesCompat   bool
+	xaiResponsesRestore  map[string]model.CodexToolSpec
 }
 
 // attemptResult 封装单次尝试的结果

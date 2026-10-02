@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/tmaxmax/go-sse"
@@ -16,6 +17,7 @@ type SSESource struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	closeErr  error
+	block     bool
 }
 
 type sseReadResult struct {
@@ -43,6 +45,15 @@ func NewSSESource(reader io.ReadCloser, maxEventSize int) *SSESource {
 	return s
 }
 
+// NewSSEBlockSource returns complete SSE blocks, including the optional event
+// field. It is used by compatibility paths that must rewrite an event while
+// preserving its wire shape.
+func NewSSEBlockSource(reader io.ReadCloser, maxEventSize int) *SSESource {
+	s := NewSSESource(reader, maxEventSize)
+	s.block = true
+	return s
+}
+
 func (s *SSESource) readLoop() {
 	defer close(s.events)
 	for ev, err := range sse.Read(s.reader, s.cfg) {
@@ -67,10 +78,29 @@ func (s *SSESource) ReadEvent(ctx context.Context) ([]byte, error) {
 		if result.err != nil {
 			return nil, result.err
 		}
+		if s.block {
+			return formatSSEBlock(result.event), nil
+		}
 		return []byte(result.event.Data), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func formatSSEBlock(event sse.Event) []byte {
+	var builder strings.Builder
+	if event.Type != "" {
+		builder.WriteString("event: ")
+		builder.WriteString(event.Type)
+		builder.WriteByte('\n')
+	}
+	for _, line := range strings.Split(event.Data, "\n") {
+		builder.WriteString("data: ")
+		builder.WriteString(line)
+		builder.WriteByte('\n')
+	}
+	builder.WriteByte('\n')
+	return []byte(builder.String())
 }
 
 // Close releases the underlying reader.
