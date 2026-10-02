@@ -470,6 +470,79 @@ func TestResponsesInboundKeepsConvertibleToolsAlongsideWebSearch(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamReasoningToolCallInterleavingKeepsActiveItems(t *testing.T) {
+	inbound := &ResponseInbound{}
+	if _, err := inbound.TransformRequest(context.Background(), []byte(`{
+	  "model":"glm-5.3",
+	  "tools":[{"type":"custom","name":"exec_command","description":"Run a shell command."}],
+	  "input":"run printf"
+	}`)); err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+
+	chunks := []*model.InternalLLMResponse{
+		chunkWithDelta("glm-5.3", &model.Message{
+			ReasoningContent: lo.ToPtr("first thought"),
+			ToolCalls: []model.ToolCall{{
+				Index: 0,
+				ID:    "call_exec",
+				Type:  "function",
+				Function: model.FunctionCall{
+					Name:      "exec_command",
+					Arguments: `{"cmd":"printf `,
+				},
+			}},
+		}),
+		chunkWithDelta("glm-5.3", &model.Message{
+			ReasoningContent: lo.ToPtr(" second thought"),
+			ToolCalls: []model.ToolCall{{
+				Index: 0,
+				Function: model.FunctionCall{
+					Arguments: `OCTOPUS_TOOL_OK"}`,
+				},
+			}},
+		}),
+		chunkWithFinish("glm-5.3", "tool_calls"),
+	}
+
+	var output bytes.Buffer
+	for _, chunk := range chunks {
+		encoded, err := inbound.TransformStream(context.Background(), chunk)
+		if err != nil {
+			t.Fatalf("TransformStream failed: %v", err)
+		}
+		output.Write(encoded)
+	}
+	events := parseSSEEvents(t, output.Bytes())
+
+	activeReasoning := make(map[string]bool)
+	for index, event := range events {
+		switch event.Type {
+		case "response.output_item.added":
+			if event.Item != nil && event.Item.Type == "reasoning" {
+				activeReasoning[event.Item.ID] = true
+			}
+		case "response.output_item.done":
+			if event.Item != nil && event.Item.Type == "reasoning" {
+				delete(activeReasoning, event.Item.ID)
+			}
+		case "response.reasoning_summary_part.added", "response.reasoning_summary_text.delta", "response.reasoning_summary_part.done", "response.reasoning_summary_text.done":
+			if event.ItemID == nil || !activeReasoning[*event.ItemID] {
+				t.Fatalf("reasoning event %s at index %d has no active reasoning item; events=%v", event.Type, index, eventTypes(events))
+			}
+		}
+	}
+
+	customDone := findEvent(events, "response.function_call_arguments.done")
+	if customDone != nil {
+		t.Fatalf("custom tool should use custom input events instead of function arguments, got %#v", customDone)
+	}
+	customInputDone := findEvent(events, "response.custom_tool_call_input.done")
+	if customInputDone == nil || customInputDone.Input != `{"cmd":"printf OCTOPUS_TOOL_OK"}` {
+		t.Fatalf("expected complete custom tool input, got %#v; events=%v", customInputDone, eventTypes(events))
+	}
+}
+
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

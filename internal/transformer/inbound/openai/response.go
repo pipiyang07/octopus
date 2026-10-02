@@ -345,7 +345,10 @@ func (i *ResponseInbound) ensureReasoningItemStarted() [][]byte {
 
 	var events [][]byte
 
-	events = append(events, i.closeCurrentOutputItem()...)
+	// A Chat stream may keep reasoning deltas arriving while a tool call is
+	// still accumulating arguments. Do not treat reasoning as the end of the
+	// tool output item; finish it on the turn boundary instead.
+	events = append(events, i.closeNonToolOutputItem()...)
 
 	i.hasReasoningItemStarted = true
 	i.currentItemID = generateItemID()
