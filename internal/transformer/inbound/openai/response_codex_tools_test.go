@@ -543,6 +543,27 @@ func TestResponsesStreamReasoningToolCallInterleavingKeepsActiveItems(t *testing
 	}
 }
 
+func TestResponsesReasoningStreamIncludesScalarSummaryShellFields(t *testing.T) {
+	inbound := &ResponseInbound{}
+	if _, err := inbound.TransformRequest(context.Background(), []byte(`{"model":"glm-5.3","input":"hello"}`)); err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+
+	out, err := inbound.TransformStream(context.Background(), chunkWithDelta("glm-5.3", &model.Message{
+		ReasoningContent: lo.ToPtr("thinking"),
+	}))
+	if err != nil {
+		t.Fatalf("TransformStream failed: %v", err)
+	}
+	text := string(out)
+	if !strings.Contains(text, `"summary":[]`) {
+		t.Fatalf("expected in-progress reasoning item to include an empty summary array, got %s", text)
+	}
+	if !strings.Contains(text, `"part":{"type":"summary_text","text":""}`) {
+		t.Fatalf("expected initial reasoning summary part to include empty text, got %s", text)
+	}
+}
+
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

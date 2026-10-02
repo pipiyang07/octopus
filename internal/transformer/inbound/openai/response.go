@@ -367,7 +367,7 @@ func (i *ResponseInbound) ensureReasoningItemStarted() [][]byte {
 		ItemID:       &i.currentItemID,
 		OutputIndex:  lo.ToPtr(i.outputIndex),
 		SummaryIndex: lo.ToPtr(0),
-		Part:         &ResponsesContentPart{Type: "summary_text"},
+		Part:         &ResponsesContentPart{Type: "summary_text", Text: lo.ToPtr("")},
 	}))
 
 	return events
@@ -1045,6 +1045,28 @@ type ResponsesItem struct {
 	// InputAudio carries the `input_audio` nested object for audio inputs.
 	// O-H6.
 	InputAudio *ResponsesInputAudio `json:"input_audio,omitempty"`
+}
+
+func (item *ResponsesItem) MarshalJSON() ([]byte, error) {
+	type alias ResponsesItem
+	data, err := json.Marshal(alias(*item))
+	if err != nil {
+		return nil, err
+	}
+	if item == nil || item.Type != "reasoning" || len(item.Summary) > 0 {
+		return data, nil
+	}
+
+	// The Responses reasoning wire shape carries an empty summary array while
+	// in progress. encoding/json omits an empty slice under `omitempty`, but
+	// Codex's item state machine uses this field when it creates the active
+	// item from `response.output_item.added`.
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	object["summary"] = json.RawMessage(`[]`)
+	return json.Marshal(object)
 }
 
 func (item *ResponsesItem) UnmarshalJSON(data []byte) error {
