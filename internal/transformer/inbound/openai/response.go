@@ -1517,6 +1517,17 @@ func convertInputToMessages(input *ResponsesInput) ([]model.Message, error) {
 	return messages, nil
 }
 
+func (i *ResponseInbound) MessagesFromRawInputItems(raw json.RawMessage) ([]model.Message, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var items []ResponsesItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("failed to decode raw responses input items: %w", err)
+	}
+	return convertInputToMessages(&ResponsesInput{Items: items})
+}
+
 func isResponsesToolOutputItem(itemType string) bool {
 	return itemType == "function_call_output" || itemType == "custom_tool_call_output" || itemType == "tool_search_output"
 }

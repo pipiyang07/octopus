@@ -291,6 +291,21 @@ func forwardResponsesCompactChat(
 	request.Model = upstreamModel
 	request.Stream = boolPtr(false)
 	request.StreamOptions = nil
+	if rawItems := request.OpenAIRawInputItems(); len(rawItems) > 0 {
+		type rawResponsesMessageConverter interface {
+			MessagesFromRawInputItems(json.RawMessage) ([]transformerModel.Message, error)
+		}
+		if converter, ok := inAdapter.(rawResponsesMessageConverter); ok {
+			messages, err := converter.MessagesFromRawInputItems(rawItems)
+			if err != nil {
+				span.End(dbmodel.AttemptFailed, 0, err.Error())
+				return http.StatusBadRequest, 0, err
+			}
+			if len(messages) > 0 {
+				request.Messages = messages
+			}
+		}
+	}
 
 	chatOutbound := openaiOutbound.ChatOutbound{}
 	upstreamRequest, err := chatOutbound.TransformRequest(c.Request.Context(), &request, channel.GetBaseUrl(), usedKey.ChannelKey)
