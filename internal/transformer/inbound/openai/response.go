@@ -319,14 +319,10 @@ func (i *ResponseInbound) handleReasoningContent(content *string) [][]byte {
 	// Accumulate reasoning content
 	i.accumulatedReasoning.WriteString(*content)
 
-	events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-		Type:        "response.reasoning.delta",
-		ItemID:      &i.currentItemID,
-		OutputIndex: lo.ToPtr(i.outputIndex),
-		Delta:       *content,
-	}))
-
-	// Emit reasoning_summary_text.delta
+	// The bridge emits the Responses summary sequence that ccs emits for
+	// Chat-derived reasoning. Do not additionally send the legacy
+	// response.reasoning.* aliases; Codex CLI treats the duplicate sequence as a
+	// state transition and can lose the active reasoning item.
 	events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
 		Type:         "response.reasoning_summary_text.delta",
 		ItemID:       &i.currentItemID,
@@ -630,13 +626,6 @@ func (i *ResponseInbound) closeReasoningItem() [][]byte {
 		OutputIndex:  lo.ToPtr(i.outputIndex),
 		SummaryIndex: lo.ToPtr(0),
 		Part:         &ResponsesContentPart{Type: "summary_text", Text: &fullReasoning},
-	}))
-
-	events = append(events, i.enqueueEvent(&ResponsesStreamEvent{
-		Type:        "response.reasoning.done",
-		ItemID:      &i.currentItemID,
-		OutputIndex: lo.ToPtr(i.outputIndex),
-		Text:        fullReasoning,
 	}))
 
 	// Emit output_item.done with encrypted_content if signatures were accumulated.

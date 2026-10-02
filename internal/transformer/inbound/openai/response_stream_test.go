@@ -165,11 +165,14 @@ func TestStreamReasoningBlocksSingleSignature(t *testing.T) {
 	if item.EncryptedContent == nil || *item.EncryptedContent != "sigA" {
 		t.Fatalf("expected encrypted_content=\"sigA\", got %v", item.EncryptedContent)
 	}
-	if findEvent(events, "response.reasoning.delta") == nil {
-		t.Fatalf("expected response.reasoning.delta, got %v", eventTypes(events))
+	if findEvent(events, "response.reasoning_summary_text.delta") == nil {
+		t.Fatalf("expected response.reasoning_summary_text.delta, got %v", eventTypes(events))
 	}
-	if done := findEvent(events, "response.reasoning.done"); done == nil || done.Text != "thinking..." {
-		t.Fatalf("expected response.reasoning.done with full text, got %+v", done)
+	if done := findEvent(events, "response.reasoning_summary_text.done"); done == nil || done.Text != "thinking..." {
+		t.Fatalf("expected response.reasoning_summary_text.done with full text, got %+v", done)
+	}
+	if findEvent(events, "response.reasoning.delta") != nil || findEvent(events, "response.reasoning.done") != nil {
+		t.Fatalf("legacy reasoning aliases should stay out of the Chat bridge stream, got %v", eventTypes(events))
 	}
 }
 
