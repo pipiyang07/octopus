@@ -39,8 +39,16 @@ func parseSSEEvents(t *testing.T, raw []byte) []ResponsesStreamEvent {
 		if len(line) == 0 {
 			continue
 		}
-		payload := bytes.TrimPrefix(line, []byte("data: "))
+		var payload []byte
+		for _, eventLine := range bytes.Split(line, []byte("\n")) {
+			if bytes.HasPrefix(eventLine, []byte("data: ")) {
+				payload = append(payload, bytes.TrimPrefix(eventLine, []byte("data: "))...)
+			}
+		}
 		if bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		if len(payload) == 0 {
 			continue
 		}
 		var ev ResponsesStreamEvent
@@ -50,6 +58,31 @@ func parseSSEEvents(t *testing.T, raw []byte) []ResponsesStreamEvent {
 		events = append(events, ev)
 	}
 	return events
+}
+
+func TestResponsesStreamEventsUseEventFraming(t *testing.T) {
+	inbound := &ResponseInbound{}
+	if _, err := inbound.TransformRequest(context.Background(), []byte(`{"model":"gpt-4o","input":"hello","stream":true}`)); err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+
+	out, err := inbound.TransformStream(context.Background(), chunkWithDelta("gpt-4o", &model.Message{
+		Role:    "assistant",
+		Content: model.MessageContent{Content: lo.ToPtr("ok")},
+	}))
+	if err != nil {
+		t.Fatalf("TransformStream failed: %v", err)
+	}
+	text := string(out)
+	for _, prefix := range []string{
+		"event: response.created\n",
+		"event: response.in_progress\n",
+		"event: response.output_item.added\n",
+	} {
+		if !strings.Contains(text, prefix) {
+			t.Fatalf("expected SSE event frame %q, got %s", prefix, text)
+		}
+	}
 }
 
 func eventTypes(events []ResponsesStreamEvent) []string {

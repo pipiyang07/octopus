@@ -308,7 +308,7 @@ func (i *ResponseInbound) enqueueEvent(ev *ResponsesStreamEvent) []byte {
 		return nil
 	}
 
-	return formatSSEData(data)
+	return formatSSEData(data, ev.Type)
 }
 
 func (i *ResponseInbound) handleReasoningContent(content *string) [][]byte {
@@ -930,8 +930,11 @@ func (i *ResponseInbound) GetInternalResponse(ctx context.Context) (*model.Inter
 }
 
 // formatSSEData formats data as SSE data line
-func formatSSEData(data []byte) []byte {
-	return []byte(fmt.Sprintf("data: %s\n\n", string(data)))
+func formatSSEData(data []byte, eventType string) []byte {
+	if eventType == "" {
+		return []byte(fmt.Sprintf("data: %s\n\n", string(data)))
+	}
+	return []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(data)))
 }
 
 // Request types
