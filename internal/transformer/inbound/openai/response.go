@@ -1392,7 +1392,7 @@ func firstUnsupportedResponsesTopLevelItemType(item *ResponsesItem) string {
 		return ""
 	}
 	switch item.Type {
-	case "", "message", "input_text", "input_image", "input_file", "input_audio", "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output":
+	case "", "message", "input_text", "input_image", "input_file", "input_audio", "function_call", "function_call_output", "reasoning", "custom_tool_call", "custom_tool_call_output", "tool_search_call", "tool_search_output", "additional_tools":
 	default:
 		return item.Type
 	}

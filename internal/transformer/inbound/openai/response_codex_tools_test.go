@@ -256,6 +256,48 @@ func TestResponsesInboundConvertsAndRestoresCustomTool(t *testing.T) {
 	}
 }
 
+func TestResponsesInboundLiftsAdditionalToolsCarrier(t *testing.T) {
+	inbound := &ResponseInbound{}
+	requestBody := `{
+	  "model":"gpt-5.4",
+	  "input":[
+	    {
+	      "type":"additional_tools",
+	      "tools":[{
+	        "type":"function",
+	        "name":"lookup_email",
+	        "description":"Lookup an email",
+	        "parameters":{
+	          "type":"object",
+	          "properties":{"query":{"type":"string"}},
+	          "required":["query"]
+	        }
+	      }]
+	    },
+	    {"type":"message","role":"user","content":"Search unread inbox mail."}
+	  ]
+	}`
+	request, err := inbound.TransformRequest(context.Background(), []byte(requestBody))
+	if err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+	if request.HasOpenAIResponsesPassthrough() {
+		t.Fatalf("additional_tools carrier should be Chat-convertible, got %q", request.OpenAIResponsesPassthroughReasonTextValue())
+	}
+	if len(request.Tools) != 1 || request.Tools[0].Function.Name != "lookup_email" {
+		t.Fatalf("expected additional_tools function to be lifted, got %#v", request.Tools)
+	}
+	if request.Tools[0].Function.Description != "Lookup an email" {
+		t.Fatalf("unexpected lifted tool description: %q", request.Tools[0].Function.Description)
+	}
+	if len(request.Messages) != 1 || request.Messages[0].Role != "user" {
+		t.Fatalf("expected additional_tools carrier to be omitted from messages, got %#v", request.Messages)
+	}
+	if request.Messages[0].Content.Content == nil || *request.Messages[0].Content.Content != "Search unread inbox mail." {
+		t.Fatalf("unexpected user message: %#v", request.Messages[0].Content)
+	}
+}
+
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

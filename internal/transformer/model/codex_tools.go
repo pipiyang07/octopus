@@ -247,6 +247,15 @@ func (c *CodexToolContext) collectInputTools(value any) {
 				}
 			}
 		}
+		if stringValue(typed["type"]) == "additional_tools" {
+			if tools, ok := typed["tools"].([]any); ok {
+				for _, tool := range tools {
+					if raw, err := json.Marshal(tool); err == nil {
+						c.AddResponseTool(raw)
+					}
+				}
+			}
+		}
 		for _, child := range typed {
 			c.collectInputTools(child)
 		}
