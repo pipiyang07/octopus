@@ -377,6 +377,10 @@ func (i *ResponseInbound) ensureReasoningItemStarted() [][]byte {
 func (i *ResponseInbound) handleTextContent(content *string) [][]byte {
 	var events [][]byte
 
+	if i.hasOpenToolCallItem() {
+		events = append(events, i.closeCurrentOutputItem()...)
+	}
+
 	// Close reasoning item if it was started
 	if i.hasReasoningItemStarted {
 		events = append(events, i.closeReasoningItem()...)
@@ -445,6 +449,10 @@ func (i *ResponseInbound) handleTextContent(content *string) [][]byte {
 func (i *ResponseInbound) handleRefusalContent(content string) [][]byte {
 	var events [][]byte
 
+	if i.hasOpenToolCallItem() {
+		events = append(events, i.closeCurrentOutputItem()...)
+	}
+
 	// Close reasoning item if it was started
 	if i.hasReasoningItemStarted {
 		events = append(events, i.closeReasoningItem()...)
@@ -507,24 +515,14 @@ func (i *ResponseInbound) handleRefusalContent(content string) [][]byte {
 
 func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 	var events [][]byte
-
-	// Close message item if it was started
-	if i.hasMessageItemStarted {
-		events = append(events, i.closeMessageItem()...)
-	}
-
-	// Close reasoning item if it was started
-	if i.hasReasoningItemStarted {
-		events = append(events, i.closeReasoningItem()...)
-	}
+	events = append(events, i.closeNonToolOutputItem()...)
 
 	for _, tc := range toolCalls {
 		toolCallIndex := tc.Index
 
 		// Initialize tool call tracking if needed
 		if _, ok := i.toolCalls[toolCallIndex]; !ok {
-			events = append(events, i.closeCurrentContentPart()...)
-			events = append(events, i.closeCurrentOutputItem()...)
+			events = append(events, i.closeNonToolOutputItem()...)
 
 			i.toolCalls[toolCallIndex] = &model.ToolCall{
 				Index: toolCallIndex,
@@ -581,6 +579,27 @@ func (i *ResponseInbound) handleToolCalls(toolCalls []model.ToolCall) [][]byte {
 	}
 
 	return events
+}
+
+func (i *ResponseInbound) closeNonToolOutputItem() [][]byte {
+	var events [][]byte
+	events = append(events, i.closeCurrentContentPart()...)
+	if i.hasMessageItemStarted {
+		events = append(events, i.closeMessageItem()...)
+	}
+	if i.hasReasoningItemStarted {
+		events = append(events, i.closeReasoningItem()...)
+	}
+	return events
+}
+
+func (i *ResponseInbound) hasOpenToolCallItem() bool {
+	for idx, started := range i.toolCallItemStarted {
+		if started && i.toolCalls[idx] != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (i *ResponseInbound) closeReasoningItem() [][]byte {

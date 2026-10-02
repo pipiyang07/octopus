@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -295,6 +296,120 @@ func TestResponsesInboundLiftsAdditionalToolsCarrier(t *testing.T) {
 	}
 	if request.Messages[0].Content.Content == nil || *request.Messages[0].Content.Content != "Search unread inbox mail." {
 		t.Fatalf("unexpected user message: %#v", request.Messages[0].Content)
+	}
+}
+
+func TestResponsesStreamRestoresCodexToolCallKinds(t *testing.T) {
+	requestBody := `{
+	  "model":"gpt-5.4",
+	  "tools":[{"type":"custom","name":"apply_patch"},{"type":"tool_search"}],
+	  "input":[
+	    {
+	      "type":"tool_search_output",
+	      "call_id":"call_search",
+	      "tools":[{
+	        "type":"namespace",
+	        "name":"mcp__files__",
+	        "tools":[{"type":"function","name":"read","parameters":{"type":"object","properties":{}}}]
+	      }]
+	    }
+	  ]
+	}`
+	inbound := &ResponseInbound{}
+	if _, err := inbound.TransformRequest(context.Background(), []byte(requestBody)); err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+
+	chunks := []*model.InternalLLMResponse{
+		chunkWithDelta("gpt-5.4", &model.Message{
+			ToolCalls: []model.ToolCall{
+				{
+					Index: 0,
+					ID:    "call_patch",
+					Type:  "function",
+					Function: model.FunctionCall{
+						Name:      "apply_patch",
+						Arguments: `{"input":"*** Begin Patch`,
+					},
+				},
+				{
+					Index: 1,
+					ID:    "call_search",
+					Type:  "function",
+					Function: model.FunctionCall{
+						Name:      "tool_search",
+						Arguments: `{"query":"files"}`,
+					},
+				},
+				{
+					Index: 2,
+					ID:    "call_read",
+					Type:  "function",
+					Function: model.FunctionCall{
+						Name:      "mcp__files____read",
+						Arguments: `{"path":"a.txt"}`,
+					},
+				},
+			},
+		}),
+		chunkWithDelta("gpt-5.4", &model.Message{
+			ToolCalls: []model.ToolCall{{
+				Index: 0,
+				Function: model.FunctionCall{
+					Arguments: `\n*** End Patch"}`,
+				},
+			}},
+		}),
+		chunkWithFinish("gpt-5.4", "tool_calls"),
+	}
+
+	var output bytes.Buffer
+	for _, chunk := range chunks {
+		encoded, err := inbound.TransformStream(context.Background(), chunk)
+		if err != nil {
+			t.Fatalf("TransformStream failed: %v", err)
+		}
+		output.Write(encoded)
+	}
+	events := parseSSEEvents(t, output.Bytes())
+	eventNames := eventTypes(events)
+
+	added := make(map[string]*ResponsesItem)
+	for index := range events {
+		if events[index].Type != "response.output_item.added" || events[index].Item == nil {
+			continue
+		}
+		added[events[index].Item.CallID] = events[index].Item
+	}
+	if added["call_patch"] == nil || added["call_patch"].Type != "custom_tool_call" || added["call_patch"].Name != "apply_patch" {
+		t.Fatalf("expected custom_tool_call to be restored, got %#v; events=%v", added["call_patch"], eventNames)
+	}
+	if added["call_search"] == nil || added["call_search"].Type != "tool_search_call" || added["call_search"].Execution != "client" {
+		t.Fatalf("expected tool_search_call to be restored, got %#v; events=%v", added["call_search"], eventNames)
+	}
+	if added["call_read"] == nil || added["call_read"].Type != "function_call" ||
+		added["call_read"].Name != "read" ||
+		added["call_read"].Namespace == nil || *added["call_read"].Namespace != "mcp__files__" {
+		t.Fatalf("expected namespace function_call to be restored, got %#v; events=%v", added["call_read"], eventNames)
+	}
+
+	if findEvent(events, "response.function_call_arguments.delta") == nil ||
+		findEvent(events, "response.function_call_arguments.done") == nil {
+		t.Fatalf("expected function argument events for tool_search and namespace calls, got %v", eventNames)
+	}
+	customDone := findEvent(events, "response.custom_tool_call_input.done")
+	if customDone == nil || customDone.Input != "*** Begin Patch\n*** End Patch" {
+		t.Fatalf("expected custom tool input to be restored, got %#v; events=%v", customDone, eventNames)
+	}
+
+	var doneTypes []string
+	for _, event := range events {
+		if event.Type == "response.output_item.done" && event.Item != nil {
+			doneTypes = append(doneTypes, event.Item.Type)
+		}
+	}
+	if !contains(doneTypes, "custom_tool_call") || !contains(doneTypes, "tool_search_call") || !contains(doneTypes, "function_call") {
+		t.Fatalf("expected all restored item types to finish, got %v; events=%v", doneTypes, eventNames)
 	}
 }
 
