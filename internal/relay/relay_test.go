@@ -591,7 +591,7 @@ func TestHandlerConvertsResponsesCustomToolToChatChannel(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Set("api_key_id", 8)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"relay-openai-chat-only-group","input":"hello","tools":[{"type":"custom","name":"apply_patch","description":"Apply a patch."}]}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"relay-openai-chat-only-group","input":"hello","tools":[{"type":"custom","name":"apply_patch","description":"Apply a patch."},{"type":"web_search"},{"type":"namespace","name":"mcp__files__","tools":[{"type":"function","name":"read","parameters":{"type":"object","properties":{}}}]}]}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	Handler(inbound.InboundTypeOpenAIResponse, c)
@@ -616,7 +616,8 @@ func TestHandlerConvertsResponsesCustomToolToChatChannel(t *testing.T) {
 	if err := json.Unmarshal(capturedBody, &payload); err != nil {
 		t.Fatalf("unmarshal upstream request failed: %v", err)
 	}
-	if len(payload.Tools) != 1 || payload.Tools[0].Function.Name != "apply_patch" {
+	if len(payload.Tools) != 2 || payload.Tools[0].Function.Name != "apply_patch" ||
+		payload.Tools[1].Function.Name != "mcp__files____read" {
 		t.Fatalf("expected apply_patch chat function, got %#v", payload.Tools)
 	}
 	if len(payload.Tools[0].Function.Parameters.Required) != 1 || payload.Tools[0].Function.Parameters.Required[0] != "input" {

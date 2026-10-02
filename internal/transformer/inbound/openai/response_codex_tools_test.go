@@ -413,6 +413,63 @@ func TestResponsesStreamRestoresCodexToolCallKinds(t *testing.T) {
 	}
 }
 
+func TestResponsesInboundDropsHostedWebSearchForChat(t *testing.T) {
+	inbound := &ResponseInbound{}
+	requestBody := `{
+	  "model":"glm-5.3",
+	  "tools":[{"type":"web_search"}],
+	  "tool_choice":"auto",
+	  "parallel_tool_calls":true,
+	  "input":"hello"
+	}`
+	request, err := inbound.TransformRequest(context.Background(), []byte(requestBody))
+	if err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+	if request.HasOpenAIResponsesPassthrough() {
+		t.Fatalf("hosted web_search should be dropped for Chat conversion, got %q", request.OpenAIResponsesPassthroughReasonTextValue())
+	}
+	if len(request.Tools) != 0 {
+		t.Fatalf("expected hosted web_search to stay out of Chat tools, got %#v", request.Tools)
+	}
+	if request.ToolChoice != nil {
+		t.Fatalf("expected tool_choice to be dropped when no tools remain, got %#v", request.ToolChoice)
+	}
+	if request.ParallelToolCalls != nil {
+		t.Fatalf("expected parallel_tool_calls to be dropped when no tools remain, got %#v", *request.ParallelToolCalls)
+	}
+}
+
+func TestResponsesInboundKeepsConvertibleToolsAlongsideWebSearch(t *testing.T) {
+	inbound := &ResponseInbound{}
+	requestBody := `{
+	  "model":"glm-5.3",
+	  "tools":[
+	    {"type":"web_search"},
+	    {"type":"function","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}},
+	    {"type":"namespace","name":"mcp__files__","tools":[{"type":"function","name":"read","parameters":{"type":"object","properties":{}}}]}
+	  ],
+	  "input":"hello"
+	}`
+	request, err := inbound.TransformRequest(context.Background(), []byte(requestBody))
+	if err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+	if request.HasOpenAIResponsesPassthrough() {
+		t.Fatalf("web_search alongside convertible tools should not require Responses passthrough, got %q", request.OpenAIResponsesPassthroughReasonTextValue())
+	}
+	var names []string
+	for _, tool := range request.Tools {
+		names = append(names, tool.Function.Name)
+	}
+	if !contains(names, "get_weather") || !contains(names, "mcp__files____read") {
+		t.Fatalf("expected function and flattened namespace tools, got %v", names)
+	}
+	if contains(names, "web_search") {
+		t.Fatalf("hosted web_search should not be sent as a Chat function, got %v", names)
+	}
+}
+
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

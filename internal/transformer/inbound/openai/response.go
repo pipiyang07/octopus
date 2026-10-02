@@ -1324,6 +1324,13 @@ func convertToInternalRequest(req *ResponsesRequest) (*model.InternalLLMRequest,
 	// Convert tools
 	if len(codexTools.Tools) > 0 {
 		chatReq.Tools = codexTools.Tools
+	} else {
+		// Hosted-only tools such as web_search have no Chat-side function
+		// equivalent in this bridge. When filtering leaves no tools, also drop
+		// tool_choice and parallel_tool_calls because strict OpenAI-compatible
+		// gateways reject those fields without a non-empty tools array.
+		chatReq.ToolChoice = nil
+		chatReq.ParallelToolCalls = nil
 	}
 
 	// Convert text format
@@ -1383,7 +1390,7 @@ func markOpenAIResponsesPassthroughIfNeeded(req *ResponsesRequest, chatReq *mode
 func firstUnsupportedResponsesToolType(tools []ResponsesTool) string {
 	for _, tool := range tools {
 		switch tool.Type {
-		case "function", "custom", "tool_search", "namespace", "image_generation":
+		case "function", "custom", "tool_search", "namespace", "image_generation", "web_search":
 			continue
 		case "":
 			return "<empty>"
