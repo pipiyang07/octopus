@@ -268,8 +268,12 @@ func (o *ChatOutbound) TransformResponse(ctx context.Context, response *http.Res
 		return nil, fmt.Errorf("response body is empty")
 	}
 
+	normalizedBody, err := normalizeChatReasoningBody(body)
+	if err != nil {
+		return nil, err
+	}
 	var resp model.InternalLLMResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(normalizedBody, &resp); err != nil {
 		if bodyLooksLikeSSE(body) {
 			return aggregateChatSSEBody(body)
 		}
@@ -323,11 +327,75 @@ func (o *ChatOutbound) TransformStream(ctx context.Context, eventData []byte) (*
 		}
 	}
 
+	normalizedEvent, err := normalizeChatReasoningBody(eventData)
+	if err != nil {
+		return nil, err
+	}
 	var resp model.InternalLLMResponse
-	if err := json.Unmarshal(eventData, &resp); err != nil {
+	if err := json.Unmarshal(normalizedEvent, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal stream chunk: %w", err)
 	}
 	return &resp, nil
+}
+
+func normalizeChatReasoningBody(body []byte) ([]byte, error) {
+	var generic map[string]any
+	if err := json.Unmarshal(body, &generic); err != nil {
+		return append([]byte(nil), body...), nil
+	}
+	choices, _ := generic["choices"].([]any)
+	for _, rawChoice := range choices {
+		choice, ok := rawChoice.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, field := range []string{"message", "delta"} {
+			message, ok := choice[field].(map[string]any)
+			if !ok {
+				continue
+			}
+			if reasoning, exists := message["reasoning"]; exists {
+				if text := chatReasoningText(reasoning); text != "" {
+					message["reasoning"] = text
+				} else {
+					delete(message, "reasoning")
+				}
+			}
+			if details, exists := message["reasoning_details"]; exists {
+				if text := chatReasoningText(details); text != "" {
+					if _, hasReasoningContent := message["reasoning_content"]; !hasReasoningContent {
+						message["reasoning_content"] = text
+					}
+				}
+				delete(message, "reasoning_details")
+			}
+		}
+	}
+	return json.Marshal(generic)
+}
+
+func chatReasoningText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case []any:
+		var parts []string
+		for _, item := range typed {
+			if text := chatReasoningText(item); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	case map[string]any:
+		for _, key := range []string{"content", "text", "summary"} {
+			if text := chatReasoningText(typed[key]); text != "" {
+				return text
+			}
+		}
+		return ""
+	default:
+		return ""
+	}
 }
 
 func (o *ChatOutbound) TransformStreamEvent(ctx context.Context, eventData []byte) ([]model.StreamEvent, error) {

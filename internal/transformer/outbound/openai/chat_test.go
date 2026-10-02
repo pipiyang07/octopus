@@ -106,6 +106,65 @@ func TestChatOutboundTransformResponseAggregatesUnlabeledSSEBody(t *testing.T) {
 	}
 }
 
+func TestChatOutboundNormalizesReasoningAliases(t *testing.T) {
+	outbound := &ChatOutbound{}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(`{
+			"id":"chatcmpl_reasoning",
+			"object":"chat.completion",
+			"created":1,
+			"model":"reasoning-model",
+			"choices":[{
+				"index":0,
+				"message":{
+					"role":"assistant",
+					"content":"answer",
+					"reasoning":{"content":"need to inspect the request"}
+				},
+				"finish_reason":"stop"
+			}]
+		}`)),
+	}
+	internalResponse, err := outbound.TransformResponse(context.Background(), response)
+	if err != nil {
+		t.Fatalf("TransformResponse failed: %v", err)
+	}
+	if len(internalResponse.Choices) != 1 || internalResponse.Choices[0].Message == nil {
+		t.Fatalf("unexpected response: %#v", internalResponse)
+	}
+	if got := internalResponse.Choices[0].Message.GetReasoningContent(); got != "need to inspect the request" {
+		t.Fatalf("expected object reasoning alias to be normalized, got %q", got)
+	}
+
+	stream, err := outbound.TransformStream(context.Background(), []byte(`{
+		"id":"chatcmpl_reasoning_stream",
+		"object":"chat.completion.chunk",
+		"created":1,
+		"model":"reasoning-model",
+		"choices":[{
+			"index":0,
+			"delta":{
+				"role":"assistant",
+				"reasoning_details":[
+					{"type":"reasoning_text","text":"first step"},
+					{"type":"reasoning_text","text":"second step"}
+				]
+			}
+		}]
+	}`))
+	if err != nil {
+		t.Fatalf("TransformStream failed: %v", err)
+	}
+	if len(stream.Choices) != 1 || stream.Choices[0].Delta == nil {
+		t.Fatalf("unexpected stream: %#v", stream)
+	}
+	if got := stream.Choices[0].Delta.GetReasoningContent(); got != "first step\n\nsecond step" {
+		t.Fatalf("expected reasoning_details alias to be normalized, got %q", got)
+	}
+}
+
 // TestBuildChatCompletionsRequestForwardsPromptCacheKey verifies that a
 // client-supplied prompt_cache_key on the Chat entrypoint reaches the
 // upstream Chat Completions payload. Before O-C4, PromptCacheKey was a
