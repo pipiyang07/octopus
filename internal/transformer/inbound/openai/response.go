@@ -1474,22 +1474,44 @@ func convertInputToMessages(input *ResponsesInput) ([]model.Message, error) {
 
 	// Array of items
 	messages := make([]model.Message, 0, len(input.Items))
+	var pendingToolMedia []model.MessageContentPart
 	for _, item := range input.Items {
-		msg, err := convertItemToMessage(&item)
+		if !isResponsesToolOutputItem(item.Type) && len(pendingToolMedia) > 0 {
+			messages = append(messages, syntheticToolMediaMessage(pendingToolMedia))
+			pendingToolMedia = nil
+		}
+		msg, mediaParts, err := convertItemToMessage(&item)
 		if err != nil {
 			return nil, err
 		}
 		if msg != nil {
 			messages = append(messages, *msg)
 		}
+		if len(mediaParts) > 0 {
+			pendingToolMedia = append(pendingToolMedia, mediaParts...)
+		}
+	}
+	if len(pendingToolMedia) > 0 {
+		messages = append(messages, syntheticToolMediaMessage(pendingToolMedia))
 	}
 
 	return messages, nil
 }
 
-func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
+func isResponsesToolOutputItem(itemType string) bool {
+	return itemType == "function_call_output" || itemType == "custom_tool_call_output" || itemType == "tool_search_output"
+}
+
+func syntheticToolMediaMessage(parts []model.MessageContentPart) model.Message {
+	return model.Message{
+		Role:    "user",
+		Content: model.MessageContent{MultipleContent: parts},
+	}
+}
+
+func convertItemToMessage(item *ResponsesItem) (*model.Message, []model.MessageContentPart, error) {
 	if item == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	switch item.Type {
@@ -1506,7 +1528,7 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 			msg.Content = model.MessageContent{Content: item.Text}
 		}
 
-		return msg, nil
+		return msg, nil, nil
 
 	case "input_image", "input_file", "input_audio":
 		role := item.Role
@@ -1517,12 +1539,12 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 			Items: []ResponsesItem{*item},
 		})
 		if content.Content == nil && len(content.MultipleContent) == 0 {
-			return nil, nil
+			return nil, nil, nil
 		}
 		return &model.Message{
 			Role:    role,
 			Content: content,
-		}, nil
+		}, nil, nil
 
 	case "function_call":
 		return &model.Message{
@@ -1537,7 +1559,7 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 					},
 				},
 			},
-		}, nil
+		}, nil, nil
 
 	case "custom_tool_call":
 		input := "null"
@@ -1559,7 +1581,7 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 					},
 				},
 			},
-		}, nil
+		}, nil, nil
 
 	case "tool_search_call":
 		arguments := rawJSONString(item.Arguments)
@@ -1578,29 +1600,38 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 					},
 				},
 			},
-		}, nil
+		}, nil, nil
 
 	case "function_call_output":
-		output, err := parseResponsesInput(item.RawOutput)
+		toolContent, mediaParts, err := planResponsesToolOutput(item.RawOutput)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		return &model.Message{
 			Role:       "tool",
 			ToolCallID: lo.ToPtr(item.CallID),
-			Content:    convertInputToMessageContent(*output),
-		}, nil
+			Content:    model.MessageContent{Content: lo.ToPtr(toolContent)},
+		}, mediaParts, nil
 
 	case "custom_tool_call_output", "tool_search_output":
 		content := ""
+		var mediaParts []model.MessageContentPart
 		if len(item.RawItem) > 0 {
 			content = string(item.RawItem)
+			if len(item.RawOutput) > 0 {
+				rewritten, extracted, err := rewriteResponsesToolOutputContainer(item.RawItem, item.RawOutput)
+				if err != nil {
+					return nil, nil, err
+				}
+				content = rewritten
+				mediaParts = extracted
+			}
 		}
 		return &model.Message{
 			Role:       "tool",
 			ToolCallID: lo.ToPtr(item.CallID),
 			Content:    model.MessageContent{Content: lo.ToPtr(content)},
-		}, nil
+		}, mediaParts, nil
 
 	case "reasoning":
 		msg := &model.Message{
@@ -1620,10 +1651,10 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, error) {
 			msg.ReasoningSignature = item.EncryptedContent
 		}
 
-		return msg, nil
+		return msg, nil, nil
 
 	default:
-		return nil, nil
+		return nil, nil, nil
 	}
 }
 
