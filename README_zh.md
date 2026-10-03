@@ -324,7 +324,7 @@ import os
 
 client = OpenAI(   
     base_url="http://127.0.0.1:8080/v1",   
-    api_key="sk-octopus-your-key", 
+    api_key="sk-octopus-your-key",
 )
 completion = client.chat.completions.create(
     model="octopus-openai",  // 填写正确的分组名称

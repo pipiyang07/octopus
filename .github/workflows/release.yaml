@@ -2,13 +2,13 @@ name: release
 
 on:
   push:
-    branches:
-      - master
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
   packages: write
-  
+
 jobs:
   release:
     name: release
@@ -16,15 +16,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-          ref: master
 
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
           go-version: 'stable'
-    
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -45,40 +42,30 @@ jobs:
       - name: Build
         run: bash scripts/build.sh release
 
-      - name: Get latest tag
-        id: tag
-        run: |
-          LATEST_TAG=$(git describe --tags --abbrev=0)
-          echo "TAG_NAME=$LATEST_TAG" >> $GITHUB_OUTPUT
-
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
           files: build/archives/*
           prerelease: false
-          tag_name: ${{ steps.tag.outputs.TAG_NAME }}
+          tag_name: ${{ github.ref_name }}
 
       - name: Docker meta (Debian)
         id: meta-debian
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ghcr.io/${{ github.repository }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ steps.tag.outputs.TAG_NAME }}
+            type=raw,value=${{ github.ref_name }}
 
       - name: Docker meta (Alpine)
         id: meta-alpine
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ghcr.io/${{ github.repository }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}
+          images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest-alpine
-            type=raw,value=${{ steps.tag.outputs.TAG_NAME }}-alpine
+            type=raw,value=${{ github.ref_name }}-alpine
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -93,19 +80,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Build and push (Alpine)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./scripts/dockerfiles/Dockerfile.alpine
           push: true
-          platforms: linux/amd64,linux/i386,linux/arm64,linux/arm/v7
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta-alpine.outputs.tags }}
           labels: ${{ steps.meta-alpine.outputs.labels }}
           build-args: |
@@ -117,7 +98,7 @@ jobs:
           context: .
           file: ./scripts/dockerfiles/Dockerfile.debian
           push: true
-          platforms: linux/amd64,linux/i386,linux/arm64,linux/arm/v7
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta-debian.outputs.tags }}
           labels: ${{ steps.meta-debian.outputs.labels }}
           build-args: |
