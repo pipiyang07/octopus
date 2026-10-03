@@ -59,7 +59,7 @@ def fetch_price_data() -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def format_price(value: float | None) -> str:
+def format_price(value) -> str:
     """格式化价格值，去除不必要的尾部零"""
     if value is None:
         return "0"
@@ -152,6 +152,17 @@ def main():
     
     entries = []
     model_count = 0
+    seen_models = set()
+    
+    def add_entry(model_key: str, cost: dict) -> bool:
+        """添加模型条目，重复 key 只保留第一个（models.dev 里同一模型可能出现在多个 provider 下）"""
+        nonlocal model_count
+        if model_key in seen_models:
+            return False
+        seen_models.add(model_key)
+        entries.append(generate_entry(model_key, cost))
+        model_count += 1
+        return True
     
     for provider in PROVIDERS:
         if provider not in raw_price:
@@ -169,8 +180,8 @@ def main():
                 continue
             
             # 添加原始模型
-            entries.append(generate_entry(model_id, cost))
-            provider_count += 1
+            if add_entry(model_id, cost):
+                provider_count += 1
             
             # 收集所有别名
             aliases = []
@@ -184,11 +195,10 @@ def main():
             
             # 添加别名 (去重)
             for alias in set(aliases):
-                entries.append(generate_entry(alias.lower(), cost))
-                provider_count += 1
-            
+                if add_entry(alias.lower(), cost):
+                    provider_count += 1
+
         print(f"  {provider}: {provider_count} models")
-        model_count += provider_count
     
     # 生成 Go 文件内容
     update_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -207,4 +217,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
