@@ -110,7 +110,7 @@ docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octo
 
 **docker compose:**
 ```bash
-wget https://raw.githubusercontent.com/Hureru/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/pipiyang07/octopus/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
@@ -556,6 +556,6 @@ First confirm the **upstream provider itself** is configured correctly (the same
 
 <div align="center">
 
-For questions not covered in this guide, feel free to open an [Issue on GitHub](https://github.com/Hureru/octopus) or discuss on the [LinuxDO thread](https://linux.do/t/topic/2160826).
+For questions not covered in this guide, feel free to open an [Issue on GitHub](https://github.com/pipiyang07/octopus) or discuss on the [LinuxDO thread](https://linux.do/t/topic/2160826).
 
 </div>

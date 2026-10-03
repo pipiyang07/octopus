@@ -110,7 +110,7 @@ docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octo
 
 **docker compose：**
 ```bash
-wget https://raw.githubusercontent.com/Hureru/octopus/refs/heads/dev/docker-compose.yml
+wget https://raw.githubusercontent.com/pipiyang07/octopus/refs/heads/dev/docker-compose.yml
 docker compose up -d
 ```
 
@@ -556,6 +556,6 @@ Octopus 支持 **OpenAI Chat / OpenAI Responses / Anthropic** 三种格式互相
 
 <div align="center">
 
-遇到本指南没覆盖的问题，欢迎到 [GitHub](https://github.com/Hureru/octopus) 提 Issue，或到 [LinuxDO 帖子](https://linux.do/t/topic/2160826) 交流。
+遇到本指南没覆盖的问题，欢迎到 [GitHub](https://github.com/pipiyang07/octopus) 提 Issue，或到 [LinuxDO 帖子](https://linux.do/t/topic/2160826) 交流。
 
 </div>

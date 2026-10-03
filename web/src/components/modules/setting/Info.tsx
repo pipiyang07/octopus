@@ -17,10 +17,20 @@ export function SettingInfo() {
     const backendNowVersion = nowVersionQuery.data || '';
     const latestVersion = latestInfoQuery.data?.tag_name || '';
 
+    const isKnownVersion = (value: string) =>
+        value !== '' && value !== 'unknown' && value !== 'dev';
+
     // 前端版本与后端当前版本不一致 → 浏览器缓存问题
-    const isCacheMismatch = !!backendNowVersion && backendNowVersion !== APP_VERSION;
+    // 本地开发/源码运行没有固化的 release 版本号，不应把这种形态误报为缓存错误。
+    const isCacheMismatch =
+        isKnownVersion(backendNowVersion) &&
+        isKnownVersion(APP_VERSION) &&
+        backendNowVersion !== APP_VERSION;
     // 最新版本与后端当前版本不一致 → 有新版本可更新
-    const hasNewVersion = latestVersion && backendNowVersion && latestVersion !== backendNowVersion;
+    const hasNewVersion =
+        isKnownVersion(latestVersion) &&
+        isKnownVersion(backendNowVersion) &&
+        latestVersion !== backendNowVersion;
 
     const clearCacheAndReload = async () => {
         // 通知 Service Worker 清理缓存
@@ -176,4 +186,3 @@ export function SettingInfo() {
         </div>
     );
 }
-

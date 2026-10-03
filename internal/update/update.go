@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	updateUrl    = "https://github.com/Hureru/octopus/releases/latest/download"
-	updateApiUrl = "https://api.github.com/repos/Hureru/octopus/releases/latest"
+	updateUrl    = "https://github.com/pipiyang07/octopus/releases/latest/download"
+	updateApiUrl = "https://api.github.com/repos/pipiyang07/octopus/releases/latest"
 )
 
 type LatestInfo struct {
@@ -82,12 +82,22 @@ func GetLatestInfo() (*LatestInfo, error) {
 		return nil, err
 	}
 
+	return parseLatestInfo(body)
+}
+
+func parseLatestInfo(body []byte) (*LatestInfo, error) {
 	var latestInfo LatestInfo
 	if err := json.Unmarshal(body, &latestInfo); err != nil {
 		log.Debugf("unmarshal body failed: %v", err)
 		return nil, err
 	}
 	if latestInfo.Message != "" {
+		if strings.EqualFold(latestInfo.Message, "Not Found") {
+			// 新 fork 或尚无 release 时，GitHub latest endpoint 返回 Not Found。
+			// 把它当作“暂无最新版本”，让界面静默显示未知，而不是反复写入错误日志。
+			log.Debugf("no latest release info for current repository")
+			return &LatestInfo{}, nil
+		}
 		return nil, fmt.Errorf("failed to get latest info: %s", latestInfo.Message)
 	}
 	return &latestInfo, nil
