@@ -444,10 +444,11 @@ prepare_docker_binaries() {
         fi
     done
 
-    if [ $copied_count -gt 0 ]; then
+    if [ $copied_count -eq ${#platforms[@]} ]; then
         log_success "Prepared ${copied_count} Docker binaries in ${docker_dir}/"
     else
-        log_warning "No Docker binaries prepared"
+        log_error "Only prepared ${copied_count}/${#platforms[@]} Docker binaries"
+        return 1
     fi
 }
 
@@ -580,34 +581,24 @@ main() {
         log_step "Building binaries"
 
         # Standard builds (pure Go, static binaries)
-        if ! build_standard linux x86_64; then
-            log_error "Failed to build Linux x86_64"
-        fi
-        if ! build_standard linux arm64; then
-            log_error "Failed to build Linux arm64"
-        fi
-        if ! build_standard linux armv7; then
-            log_error "Failed to build Linux armv7"
-        fi
-        if ! build_standard linux x86; then
-            log_error "Failed to build Linux x86"
-        fi
-        if ! build_standard windows x86_64; then
-            log_error "Failed to build Windows x86_64"
-        fi
-        if ! build_standard windows x86; then
-            log_error "Failed to build Windows x86"
-        fi
-        if ! build_standard darwin arm64; then
-            log_error "Failed to build Darwin arm64"
-        fi
-        if ! build_standard darwin x86_64; then
-            log_error "Failed to build Darwin arm64"
+        # 任一平台编译失败都必须中止发版，否则会产生空 Release / 缺二进制的 Docker 镜像
+        local build_failed=0
+        for target in "linux x86_64" "linux arm64" "linux armv7" "linux x86" \
+                      "windows x86_64" "windows x86" "darwin arm64" "darwin x86_64"; do
+            if ! build_standard ${target}; then
+                build_failed=1
+            fi
+        done
+        if [ "${build_failed}" -ne 0 ]; then
+            log_error "Some platform builds failed, aborting release"
+            exit 1
         fi
 
         # Post-processing
+        # Docker 二进制缺失意味着镜像构建必然失败，直接中止
         if ! prepare_docker_binaries; then
-            log_warning "Failed to prepare Docker binaries, but continuing..."
+            log_error "Failed to prepare Docker binaries, aborting release"
+            exit 1
         fi
 
         if ! generate_checksums; then
