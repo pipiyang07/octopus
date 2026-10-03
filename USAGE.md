@@ -105,7 +105,7 @@ If your provider isn't a relay site but gave you a Base URL + Key directly (e.g.
 
 **Docker run:**
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/pipiyang07/octopus:latest
 ```
 
 **docker compose:**
@@ -114,7 +114,7 @@ wget https://raw.githubusercontent.com/pipiyang07/octopus/refs/heads/dev/docker-
 docker compose up -d
 ```
 
-> ⚠️ **You must use the `hureru/octopus` image** (the version with Site functionality). If you use `bestrui/octopus` or other upstream images, you won't see the "Sites" page. For Release binaries and building from source, see [README.md](README.md).
+> ⚠️ **Please use this fork's image `ghcr.io/pipiyang07/octopus`** (the version with Site management and Codex protocol conversion). If you use the upstream `bestruirui/octopus` image, you won't see the new features. For Release binaries and building from source, see [README.md](README.md).
 
 ### 4.2 First Login
 

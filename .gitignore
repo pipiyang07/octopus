@@ -1,6 +1,7 @@
 data
 build
 static/out/
+.DS_Store
 .vscode
 .claude/
 .codex

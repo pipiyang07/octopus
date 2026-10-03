@@ -10,7 +10,7 @@
 
 </div>
 
-> Forked from [bestruirui/octopus](https://github.com/bestruirui/octopus) — see [Differences from Upstream](#-differences-from-upstream) for what this fork changes.
+> Forked from [bestruirui/octopus](https://github.com/bestruirui/octopus) under AGPL-3.0 — see [NOTICE.md](NOTICE.md) and [Differences from Upstream](#-differences-from-upstream) for what this fork changes.
 
 
 ## ✨ Features
@@ -36,7 +36,7 @@
 Run directly:
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/pipiyang07/octopus:latest
 ```
 
 Or use docker compose:
@@ -322,7 +322,7 @@ import os
 
 client = OpenAI(   
     base_url="http://127.0.0.1:8080/v1",   
-    api_key="sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg", 
+    api_key="sk-octopus-your-key", 
 )
 completion = client.chat.completions.create(
     model="octopus-openai",  # Use the correct group name
@@ -341,7 +341,7 @@ Edit `~/.claude/settings.json`
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
-    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg",
+    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-your-key",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ANTHROPIC_MODEL": "octopus-sonnet-4-5",
@@ -371,7 +371,7 @@ Edit `~/.codex/auth.json`
 
 ```json
 {
-  "OPENAI_API_KEY": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg"
+  "OPENAI_API_KEY": "sk-octopus-your-key"
 }
 ```
 

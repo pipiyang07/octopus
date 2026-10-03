@@ -10,7 +10,7 @@
 
 </div>
 
-> 本项目 Fork 自 [bestruirui/octopus](https://github.com/bestruirui/octopus)，与上游的差异见 [与上游的差异](#-与上游的差异)。
+> 本项目 Fork 自 [bestruirui/octopus](https://github.com/bestruirui/octopus)，遵循 AGPL-3.0 协议，二开声明见 [NOTICE.md](NOTICE.md)，与上游的差异见 [与上游的差异](#-与上游的差异)。
 
 
 ## ✨ 特性
@@ -36,7 +36,7 @@
 直接运行
 
 ```bash
-docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 hureru/octopus
+docker run -d --name octopus -v /path/to/data:/app/data -p 8080:8080 ghcr.io/pipiyang07/octopus:latest
 ```
 
 或者使用 docker compose 运行
@@ -324,7 +324,7 @@ import os
 
 client = OpenAI(   
     base_url="http://127.0.0.1:8080/v1",   
-    api_key="sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg", 
+    api_key="sk-octopus-your-key", 
 )
 completion = client.chat.completions.create(
     model="octopus-openai",  // 填写正确的分组名称
@@ -343,7 +343,7 @@ print(completion.choices[0].message.content)
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8080",
-    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg",
+    "ANTHROPIC_AUTH_TOKEN": "sk-octopus-your-key",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "ANTHROPIC_MODEL": "octopus-sonnet-4-5",
@@ -372,7 +372,7 @@ base_url = "http://127.0.0.1:8080/v1"
 
 ```json
 {
-  "OPENAI_API_KEY": "sk-octopus-P48ROljwJmWBYVARjwQM8Nkiezlg7WOrXXOWDYY8TI5p9Mzg"
+  "OPENAI_API_KEY": "sk-octopus-your-key"
 }
 ```
 
