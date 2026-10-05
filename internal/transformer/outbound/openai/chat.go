@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/bestruirui/octopus/internal/transformer/model"
@@ -302,17 +303,37 @@ func messageHasOnlyReasoning(message *model.Message) bool {
 // （o1/o3/o4/gpt-5）。这些系列只接受 max_completion_tokens，旧的 max_tokens
 // 会被 OpenAI 官方 API 直接拒绝或悄悄忽略。
 func isReasoningChatModel(modelName string) bool {
-	name := strings.ToLower(strings.TrimSpace(modelName))
-	if name == "" {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	if slash := strings.LastIndexByte(modelName, '/'); slash >= 0 {
+		modelName = modelName[slash+1:]
+	}
+	if modelName == "" {
 		return false
 	}
-	if strings.HasPrefix(name, "o1") || strings.HasPrefix(name, "o3") || strings.HasPrefix(name, "o4") {
+	if modelName == "o1" || strings.HasPrefix(modelName, "o1-") {
 		return true
 	}
-	if strings.HasPrefix(name, "gpt-5") {
+	if len(modelName) > 1 && modelName[0] == 'o' && modelName[1] >= '0' && modelName[1] <= '9' {
 		return true
 	}
-	return false
+	if strings.HasPrefix(modelName, "gpt-") && len(modelName) > len("gpt-") &&
+		modelName[4] >= '5' && modelName[4] <= '9' {
+		return true
+	}
+	if strings.HasPrefix(modelName, "grok-4.") {
+		minor := modelName[len("grok-4."):]
+		digits := ""
+		for _, char := range minor {
+			if char < '0' || char > '9' {
+				break
+			}
+			digits += string(char)
+		}
+		if parsed, err := strconv.Atoi(digits); err == nil && parsed >= 5 {
+			return true
+		}
+	}
+	return strings.HasPrefix(modelName, "grok-build-")
 }
 
 func convertToolsToChatCompletions(tools []model.Tool) []ChatCompletionsTool {
