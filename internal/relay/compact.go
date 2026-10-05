@@ -188,7 +188,7 @@ func HandleResponsesCompact(c *gin.Context) {
 			}
 
 			if channel.Type == outbound.OutboundTypeOpenAIChat {
-				statusCode, retryAfter, attemptErr = forwardResponsesCompactChat(c, metrics, iter, channel, usedKey, item.ModelName, compactInbound, compactRequest, compactTransformErr, compactReplayState)
+				statusCode, retryAfter, attemptErr = forwardResponsesCompactChat(c, metrics, iter, channel, usedKey, item.ModelName, compactInbound, compactRequest, compactTransformErr, compactReplayState, group.ID, group.SessionKeepTime)
 			} else {
 				statusCode, retryAfter, attemptErr = forwardResponsesCompact(c, metrics, iter, channel, usedKey, body)
 			}
@@ -264,6 +264,8 @@ func forwardResponsesCompactChat(
 	internalRequest *transformerModel.InternalLLMRequest,
 	transformErr error,
 	replayState *wsConversationState,
+	groupID int,
+	sessionKeepTime int,
 ) (int, time.Duration, error) {
 	span := iter.StartAttempt(channel.ID, usedKey.ID, channel.Name)
 	if transformErr != nil {
@@ -341,6 +343,7 @@ func forwardResponsesCompactChat(
 		span.End(dbmodel.AttemptFailed, response.StatusCode, err.Error())
 		return response.StatusCode, 0, fmt.Errorf("failed to transform compact chat response: %w", err)
 	}
+	saveResponsesCompactReplayState(metrics, internalRequest, internalResponse, replayState, channel, usedKey, groupID, sessionKeepTime)
 	responsesBody, err := inAdapter.TransformResponse(c.Request.Context(), internalResponse)
 	if err != nil {
 		span.End(dbmodel.AttemptFailed, response.StatusCode, err.Error())
@@ -371,6 +374,45 @@ func forwardResponsesCompactChat(
 	metrics.SetInternalResponse(internalResponse, metrics.RequestModel)
 	span.End(dbmodel.AttemptSuccess, response.StatusCode, "")
 	return response.StatusCode, 0, nil
+}
+
+func saveResponsesCompactReplayState(
+	metrics *RelayMetrics,
+	request *transformerModel.InternalLLMRequest,
+	response *transformerModel.InternalLLMResponse,
+	replayState *wsConversationState,
+	channel *dbmodel.Channel,
+	usedKey dbmodel.ChannelKey,
+	groupID int,
+	sessionKeepTime int,
+) {
+	if metrics == nil || request == nil || response == nil || channel == nil {
+		return
+	}
+
+	var newState *wsConversationState
+	if replayState != nil && request.IsOpenAIExactReplayRequest() {
+		newState = cloneWSConversationState(replayState)
+	}
+	if newState == nil {
+		newState = &wsConversationState{
+			RequestModel: metrics.RequestModel,
+			ChannelID:    channel.ID,
+			ChannelKeyID: usedKey.ID,
+		}
+	} else {
+		newState.RequestModel = metrics.RequestModel
+		newState.ChannelID = channel.ID
+		newState.ChannelKeyID = usedKey.ID
+	}
+
+	replayRequest := cloneInternalRequest(request)
+	replayRequest.Model = metrics.RequestModel
+	newState.ApplySuccessfulTurn(replayRequest, response)
+	if newState.LastResponseID == "" {
+		return
+	}
+	storeResponsesReplayState(metrics.APIKeyID, groupID, metrics.RequestModel, newState, wsConversationStateTTL(sessionKeepTime))
 }
 
 func forwardResponsesCompact(c *gin.Context, metrics *RelayMetrics, iter *balancer.Iterator, channel *dbmodel.Channel, usedKey dbmodel.ChannelKey, requestBody []byte) (int, time.Duration, error) {
