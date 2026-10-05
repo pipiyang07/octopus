@@ -77,6 +77,93 @@ func TestBuildChatCompletionsRequestUsesExplicitWhitelist(t *testing.T) {
 	}
 }
 
+func TestChatOutboundDeepSeekResponsesCompatibility(t *testing.T) {
+	visibleReasoning := "private reasoning"
+	toolArgs := `{"cmd":"pwd"}`
+	maxOutputTokens := int64(512)
+	req := &model.InternalLLMRequest{
+		Model:               "deepseek-v4.1-flash",
+		RawAPIFormat:        model.APIFormatOpenAIResponse,
+		MaxCompletionTokens: &maxOutputTokens,
+		ReasoningEffort:     "high",
+		Messages: []model.Message{
+			{Role: "user", Content: model.MessageContent{Content: stringPtr("run a command")}},
+			{Role: "assistant", ReasoningContent: &visibleReasoning},
+			{Role: "assistant", ToolCalls: []model.ToolCall{{
+				ID: "call_1", Type: "function",
+				Function: model.FunctionCall{Name: "exec_command", Arguments: toolArgs},
+			}}},
+			{Role: "tool", ToolCallID: stringPtr("call_1"), Content: model.MessageContent{Content: stringPtr("/tmp")}},
+			{Role: "assistant", Content: model.MessageContent{Content: stringPtr("Done")}},
+		},
+	}
+
+	httpReq, err := (&ChatOutbound{}).TransformRequest(context.Background(), req, "https://api.deepseek.com/v1", "test-key")
+	if err != nil {
+		t.Fatalf("TransformRequest failed: %v", err)
+	}
+	body, err := io.ReadAll(httpReq.Body)
+	if err != nil {
+		t.Fatalf("read request body: %v", err)
+	}
+	var payload struct {
+		Messages            []model.Message       `json:"messages"`
+		MaxTokens           *int64                `json:"max_tokens"`
+		MaxCompletionTokens *int64                `json:"max_completion_tokens"`
+		ReasoningEffort     string                `json:"reasoning_effort"`
+		Thinking            *model.ThinkingConfig `json:"thinking"`
+		Store               *bool                 `json:"store"`
+		ServiceTier         *string               `json:"service_tier"`
+		Metadata            map[string]string     `json:"metadata"`
+		SafetyIdentifier    *string               `json:"safety_identifier"`
+		PromptCacheKey      *string               `json:"prompt_cache_key"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	if payload.MaxTokens == nil || *payload.MaxTokens != maxOutputTokens || payload.MaxCompletionTokens != nil {
+		t.Fatalf("expected max_completion_tokens mapped to max_tokens, got %#v", payload)
+	}
+	if payload.ReasoningEffort != "" {
+		t.Fatalf("expected OpenAI reasoning_effort omitted for DeepSeek, got %q", payload.ReasoningEffort)
+	}
+	if payload.Thinking == nil || payload.Thinking.Type != "enabled" {
+		t.Fatalf("expected reasoning effort mapped to DeepSeek thinking mode, got %#v", payload.Thinking)
+	}
+	if payload.Store != nil || payload.ServiceTier != nil || payload.Metadata != nil ||
+		payload.SafetyIdentifier != nil || payload.PromptCacheKey != nil {
+		t.Fatalf("expected Responses/OpenAI-only fields omitted for DeepSeek Chat, got %#v", payload)
+	}
+	if len(payload.Messages) != 4 {
+		t.Fatalf("expected reasoning-only assistant message removed and all other history retained, got %#v", payload.Messages)
+	}
+	if payload.Messages[1].Role != "assistant" || len(payload.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("expected assistant tool call to be preserved, got %#v", payload.Messages[1])
+	}
+	for _, message := range payload.Messages {
+		if message.Role == "assistant" && message.Content.Content == nil && len(message.ToolCalls) == 0 {
+			t.Fatalf("DeepSeek payload contains empty assistant message: %#v", message)
+		}
+	}
+}
+
+func TestDeepSeekResponsesCompatibilityDoesNotAffectNativeChatRequests(t *testing.T) {
+	maxCompletionTokens := int64(128)
+	request := &model.InternalLLMRequest{
+		Model:               "deepseek-v4.1-flash",
+		RawAPIFormat:        model.APIFormatOpenAIChatCompletion,
+		MaxCompletionTokens: &maxCompletionTokens,
+		ReasoningEffort:     "high",
+		Messages: []model.Message{{
+			Role: "assistant", ReasoningContent: stringPtr("native chat reasoning"),
+		}},
+	}
+	wire := buildChatCompletionsRequest(request)
+	if wire.MaxCompletionTokens == nil || wire.MaxTokens != nil || wire.ReasoningEffort != "high" || len(wire.Messages) != 1 {
+		t.Fatalf("expected native Chat request to keep existing behavior, got %#v", wire)
+	}
+}
+
 func TestChatOutboundTransformResponseAggregatesUnlabeledSSEBody(t *testing.T) {
 	body := strings.Join([]string{
 		`: keepalive`,

@@ -165,27 +165,62 @@ func buildChatCompletionsRequest(request *model.InternalLLMRequest) *ChatComplet
 	if request == nil {
 		return &ChatCompletionsRequest{}
 	}
+	deepSeekResponsesCompat := request.RawAPIFormat == model.APIFormatOpenAIResponse && isDeepSeekModel(request.Model)
+	maxCompletionTokens := request.MaxCompletionTokens
+	maxTokens := request.MaxTokens
+	reasoningEffort := request.ReasoningEffort
+	store := request.Store
+	serviceTier := request.ServiceTier
+	metadata := request.Metadata
+	safetyIdentifier := request.SafetyIdentifier
+	promptCacheKey := chatPromptCacheKey(request)
+	thinking := request.Thinking
+	messages := request.Messages
+	if deepSeekResponsesCompat {
+		// DeepSeek's Chat API accepts max_tokens and requires assistant history
+		// messages to contain visible content or tool calls. Responses reasoning
+		// items become reasoning-only assistant messages internally, so omit them
+		// from this provider-specific wire payload.
+		if maxTokens == nil {
+			maxTokens = maxCompletionTokens
+		}
+		maxCompletionTokens = nil
+		reasoningEffort = ""
+		store = nil
+		serviceTier = nil
+		metadata = nil
+		safetyIdentifier = nil
+		promptCacheKey = nil
+		if thinking == nil && request.ReasoningEffort != "" {
+			thinkingType := "enabled"
+			if strings.EqualFold(strings.TrimSpace(request.ReasoningEffort), "none") {
+				thinkingType = "disabled"
+			}
+			thinking = &model.ThinkingConfig{Type: thinkingType}
+		}
+		messages = deepSeekChatMessages(messages)
+	}
 
 	result := &ChatCompletionsRequest{
-		Messages:            request.Messages,
+		Messages:            messages,
 		Model:               request.Model,
 		FrequencyPenalty:    request.FrequencyPenalty,
 		Logprobs:            request.Logprobs,
-		MaxCompletionTokens: request.MaxCompletionTokens,
-		MaxTokens:           request.MaxTokens,
+		MaxCompletionTokens: maxCompletionTokens,
+		MaxTokens:           maxTokens,
 		PresencePenalty:     request.PresencePenalty,
 		Seed:                request.Seed,
-		Store:               request.Store,
+		Store:               store,
 		Temperature:         request.Temperature,
 		TopLogprobs:         request.TopLogprobs,
 		TopP:                request.TopP,
 		LogitBias:           request.LogitBias,
-		Metadata:            request.Metadata,
+		Metadata:            metadata,
 		Modalities:          request.Modalities,
-		ReasoningEffort:     request.ReasoningEffort,
-		Thinking:            request.Thinking,
+		ReasoningEffort:     reasoningEffort,
+		Thinking:            thinking,
 		ReasoningSplit:      request.ReasoningSplit,
-		ServiceTier:         request.ServiceTier,
+		ServiceTier:         serviceTier,
 		Stop:                request.Stop,
 		Stream:              request.Stream,
 		StreamOptions:       request.StreamOptions,
@@ -193,8 +228,8 @@ func buildChatCompletionsRequest(request *model.InternalLLMRequest) *ChatComplet
 		Tools:               convertToolsToChatCompletions(request.Tools),
 		ToolChoice:          request.ToolChoice,
 		ResponseFormat:      request.ResponseFormat,
-		SafetyIdentifier:    request.SafetyIdentifier,
-		PromptCacheKey:      chatPromptCacheKey(request),
+		SafetyIdentifier:    safetyIdentifier,
+		PromptCacheKey:      promptCacheKey,
 		User:                request.User,
 		Verbosity:           request.Verbosity,
 		Prediction:          request.Prediction,
@@ -225,6 +260,42 @@ func buildChatCompletionsRequest(request *model.InternalLLMRequest) *ChatComplet
 	}
 
 	return result
+}
+
+func isDeepSeekModel(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	if slash := strings.LastIndexByte(modelName, '/'); slash >= 0 {
+		modelName = modelName[slash+1:]
+	}
+	return strings.HasPrefix(modelName, "deepseek-")
+}
+
+func deepSeekChatMessages(messages []model.Message) []model.Message {
+	filtered := make([]model.Message, 0, len(messages))
+	for _, message := range messages {
+		if message.Role == "assistant" && messageHasOnlyReasoning(&message) {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return filtered
+}
+
+func messageHasOnlyReasoning(message *model.Message) bool {
+	if message == nil || message.Role != "assistant" || len(message.ToolCalls) > 0 {
+		return false
+	}
+	if message.Content.Content != nil && strings.TrimSpace(*message.Content.Content) != "" {
+		return false
+	}
+	for _, part := range message.Content.MultipleContent {
+		if part.Type != "text" || (part.Text != nil && strings.TrimSpace(*part.Text) != "") {
+			return false
+		}
+	}
+	return (message.ReasoningContent != nil && *message.ReasoningContent != "") ||
+		(message.Reasoning != nil && *message.Reasoning != "") || len(message.ReasoningBlocks) > 0 ||
+		len(message.RedactedThinkingBlocks) > 0 || (message.ReasoningSignature != nil && *message.ReasoningSignature != "")
 }
 
 // isReasoningChatModel 判断 Chat Completions 端的模型是否属于推理系列
