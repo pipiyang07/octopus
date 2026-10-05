@@ -77,6 +77,31 @@ func TestBuildChatCompletionsRequestUsesExplicitWhitelist(t *testing.T) {
 	}
 }
 
+func TestBuildChatCompletionsRequestForwardsReasoningEffortObject(t *testing.T) {
+	req := &model.InternalLLMRequest{
+		Model:                 "openrouter/model",
+		ReasoningEffortObject: &model.ReasoningEffortObject{Effort: "xhigh"},
+	}
+	wire := buildChatCompletionsRequest(req)
+	body, err := json.Marshal(wire)
+	if err != nil {
+		t.Fatalf("marshal chat request failed: %v", err)
+	}
+	var payload struct {
+		Reasoning       *model.ReasoningEffortObject `json:"reasoning"`
+		ReasoningEffort string                       `json:"reasoning_effort"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal chat request failed: %v", err)
+	}
+	if payload.Reasoning == nil || payload.Reasoning.Effort != "xhigh" {
+		t.Fatalf("expected reasoning.effort=xhigh, got %#v", payload.Reasoning)
+	}
+	if payload.ReasoningEffort != "" {
+		t.Fatalf("expected top-level reasoning_effort to be omitted, got %q", payload.ReasoningEffort)
+	}
+}
+
 func TestChatOutboundDeepSeekResponsesCompatibility(t *testing.T) {
 	visibleReasoning := "private reasoning"
 	toolArgs := `{"cmd":"pwd"}`

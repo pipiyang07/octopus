@@ -232,6 +232,10 @@ type InternalLLMRequest struct {
 	// Controls effort on reasoning for reasoning models. It can be set to "low", "medium", or "high".
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
+	// ReasoningEffortObject carries OpenRouter-style `reasoning.effort` for
+	// provider-specific outbound payloads. It is not a generic wire field.
+	ReasoningEffortObject *ReasoningEffortObject `json:"-"`
+
 	// Reasoning budget for reasoning models.
 	// Help fields， will not be sent to the llm service.
 	ReasoningBudget *int64 `json:"-"`
@@ -737,6 +741,11 @@ func (s *Stop) UnmarshalJSON(data []byte) error {
 type ThinkingConfig struct {
 	// Type controls whether thinking mode is enabled. Valid values: "enabled" or "disabled".
 	Type string `json:"type,omitempty"`
+}
+
+// ReasoningEffortObject is the OpenRouter-style normalized reasoning request.
+type ReasoningEffortObject struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // Message represents a message in the conversation.

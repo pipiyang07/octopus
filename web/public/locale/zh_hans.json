@@ -905,6 +905,10 @@
             "codexPromptCacheAuto": "自动",
             "codexPromptCacheEnabled": "开启",
             "codexReasoning": "Codex Reasoning 参数",
+            "codexEffortParam": "Codex Effort 字段",
+            "codexEffortMode": "Codex Effort 映射",
+            "codexReasoningLevels": "按模型 Reasoning 档位",
+            "codexReasoningLevelsPlaceholder": "例如：low, high, max",
             "matchRegex": "匹配正则",
             "matchRegexPlaceholder": "可选：用于匹配请求模型名称的正则表达式",
             "remark": "备注"

@@ -905,6 +905,10 @@
             "codexPromptCacheAuto": "Auto",
             "codexPromptCacheEnabled": "Enabled",
             "codexReasoning": "Codex Reasoning Parameter",
+            "codexEffortParam": "Codex Effort Field",
+            "codexEffortMode": "Codex Effort Mapping",
+            "codexReasoningLevels": "Per-Model Reasoning Levels",
+            "codexReasoningLevelsPlaceholder": "For example: low, high, max",
             "matchRegex": "Match Regex",
             "matchRegexPlaceholder": "Optional: regex pattern to match request model names",
             "remark": "Remark"

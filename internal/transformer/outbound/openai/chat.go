@@ -32,32 +32,33 @@ type ChatCompletionsRequest struct {
 	Messages []model.Message `json:"messages"`
 	Model    string          `json:"model"`
 
-	FrequencyPenalty    *float64              `json:"frequency_penalty,omitempty"`
-	Logprobs            *bool                 `json:"logprobs,omitempty"`
-	MaxCompletionTokens *int64                `json:"max_completion_tokens,omitempty"`
-	MaxTokens           *int64                `json:"max_tokens,omitempty"`
-	PresencePenalty     *float64              `json:"presence_penalty,omitempty"`
-	Seed                *int64                `json:"seed,omitempty"`
-	Store               *bool                 `json:"store,omitempty"`
-	Temperature         *float64              `json:"temperature,omitempty"`
-	TopLogprobs         *int64                `json:"top_logprobs,omitempty"`
-	TopP                *float64              `json:"top_p,omitempty"`
-	LogitBias           map[string]int64      `json:"logit_bias,omitempty"`
-	Metadata            map[string]string     `json:"metadata,omitempty"`
-	Modalities          []string              `json:"modalities,omitempty"`
-	Audio               *ChatCompletionsAudio `json:"audio,omitempty"`
-	ReasoningEffort     string                `json:"reasoning_effort,omitempty"`
-	Thinking            *model.ThinkingConfig `json:"thinking,omitempty"`
-	ReasoningSplit      *bool                 `json:"reasoning_split,omitempty"`
-	ServiceTier         *string               `json:"service_tier,omitempty"`
-	Stop                *model.Stop           `json:"stop,omitempty"`
-	Stream              *bool                 `json:"stream,omitempty"`
-	StreamOptions       *model.StreamOptions  `json:"stream_options,omitempty"`
-	ParallelToolCalls   *bool                 `json:"parallel_tool_calls,omitempty"`
-	Tools               []ChatCompletionsTool `json:"tools,omitempty"`
-	ToolChoice          *model.ToolChoice     `json:"tool_choice,omitempty"`
-	ResponseFormat      *model.ResponseFormat `json:"response_format,omitempty"`
-	SafetyIdentifier    *string               `json:"safety_identifier,omitempty"`
+	FrequencyPenalty    *float64                     `json:"frequency_penalty,omitempty"`
+	Logprobs            *bool                        `json:"logprobs,omitempty"`
+	MaxCompletionTokens *int64                       `json:"max_completion_tokens,omitempty"`
+	MaxTokens           *int64                       `json:"max_tokens,omitempty"`
+	PresencePenalty     *float64                     `json:"presence_penalty,omitempty"`
+	Seed                *int64                       `json:"seed,omitempty"`
+	Store               *bool                        `json:"store,omitempty"`
+	Temperature         *float64                     `json:"temperature,omitempty"`
+	TopLogprobs         *int64                       `json:"top_logprobs,omitempty"`
+	TopP                *float64                     `json:"top_p,omitempty"`
+	LogitBias           map[string]int64             `json:"logit_bias,omitempty"`
+	Metadata            map[string]string            `json:"metadata,omitempty"`
+	Modalities          []string                     `json:"modalities,omitempty"`
+	Audio               *ChatCompletionsAudio        `json:"audio,omitempty"`
+	ReasoningEffort     string                       `json:"reasoning_effort,omitempty"`
+	Reasoning           *model.ReasoningEffortObject `json:"reasoning,omitempty"`
+	Thinking            *model.ThinkingConfig        `json:"thinking,omitempty"`
+	ReasoningSplit      *bool                        `json:"reasoning_split,omitempty"`
+	ServiceTier         *string                      `json:"service_tier,omitempty"`
+	Stop                *model.Stop                  `json:"stop,omitempty"`
+	Stream              *bool                        `json:"stream,omitempty"`
+	StreamOptions       *model.StreamOptions         `json:"stream_options,omitempty"`
+	ParallelToolCalls   *bool                        `json:"parallel_tool_calls,omitempty"`
+	Tools               []ChatCompletionsTool        `json:"tools,omitempty"`
+	ToolChoice          *model.ToolChoice            `json:"tool_choice,omitempty"`
+	ResponseFormat      *model.ResponseFormat        `json:"response_format,omitempty"`
+	SafetyIdentifier    *string                      `json:"safety_identifier,omitempty"`
 	// PromptCacheKey mirrors the top-level model field. Only forwarded when
 	// the client populated the field on the Chat entrypoint — Responses
 	// inbound carries its own ResponsesPromptCacheKey pass-through that
@@ -219,6 +220,7 @@ func buildChatCompletionsRequest(request *model.InternalLLMRequest) *ChatComplet
 		Metadata:            metadata,
 		Modalities:          request.Modalities,
 		ReasoningEffort:     reasoningEffort,
+		Reasoning:           request.ReasoningEffortObject,
 		Thinking:            thinking,
 		ReasoningSplit:      request.ReasoningSplit,
 		ServiceTier:         serviceTier,

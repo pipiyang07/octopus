@@ -107,6 +107,28 @@ export function ChannelForm({
     const effectiveKey =
         formData.keys.find((k) => k.enabled && k.channel_key.trim())?.channel_key.trim() || '';
 
+    const configuredModels = Array.from(new Set([...autoModels, ...customModels]));
+    const effortValueMode = formData.codex_compat.effort_value_mode ?? 'passthrough';
+    const updateModelReasoningLevels = (modelName: string, value: string) => {
+        const levels = value
+            .split(',')
+            .map((level) => level.trim().toLowerCase())
+            .filter(Boolean);
+        const nextLevels = { ...(formData.codex_compat.model_reasoning_levels ?? {}) };
+        if (levels.length > 0) {
+            nextLevels[modelName] = levels;
+        } else {
+            delete nextLevels[modelName];
+        }
+        onFormDataChange({
+            ...formData,
+            codex_compat: {
+                ...formData.codex_compat,
+                model_reasoning_levels: nextLevels,
+            },
+        });
+    };
+
     const updateModels = (nextAuto: string[], nextCustom: string[]) => {
         const model = nextAuto.join(',');
         const custom_model = nextCustom.join(',');
@@ -551,10 +573,91 @@ export function ChannelForm({
                                             </SelectContent>
                                         </Select>
                                     </div>
+                                    {(formData.codex_compat.reasoning_param ?? 'reasoning_effort') === 'reasoning_effort' ? (
+                                        <div className="space-y-2">
+                                            <label htmlFor={`${idPrefix}-codex-effort-param`} className="text-sm font-medium text-card-foreground">
+                                                {t('codexEffortParam')}
+                                            </label>
+                                            <Select
+                                                value={formData.codex_compat.effort_param ?? 'reasoning_effort'}
+                                                onValueChange={(value) => onFormDataChange({
+                                                    ...formData,
+                                                    codex_compat: {
+                                                        ...formData.codex_compat,
+                                                        effort_param: value as NonNullable<CodexCompatConfig['effort_param']>,
+                                                    },
+                                                })}
+                                            >
+                                                <SelectTrigger id={`${idPrefix}-codex-effort-param`} className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent className="rounded-xl">
+                                                    <SelectItem className="rounded-xl" value="reasoning_effort">reasoning_effort</SelectItem>
+                                                    <SelectItem className="rounded-xl" value="reasoning.effort">reasoning.effort</SelectItem>
+                                                    <SelectItem className="rounded-xl" value="none">none</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    ) : null}
+                                    {(formData.codex_compat.reasoning_param ?? 'reasoning_effort') === 'reasoning_effort' ? (
+                                        <div className="space-y-2">
+                                            <label htmlFor={`${idPrefix}-codex-effort-mode`} className="text-sm font-medium text-card-foreground">
+                                                {t('codexEffortMode')}
+                                            </label>
+                                            <Select
+                                                value={effortValueMode}
+                                                onValueChange={(value) => onFormDataChange({
+                                                    ...formData,
+                                                    codex_compat: {
+                                                        ...formData.codex_compat,
+                                                        effort_value_mode: value as NonNullable<CodexCompatConfig['effort_value_mode']>,
+                                                    },
+                                                })}
+                                            >
+                                                <SelectTrigger id={`${idPrefix}-codex-effort-mode`} className="rounded-xl w-full border border-border px-4 py-2 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent className="rounded-xl">
+                                                    <SelectItem className="rounded-xl" value="passthrough">passthrough</SelectItem>
+                                                    <SelectItem className="rounded-xl" value="deepseek">deepseek</SelectItem>
+                                                    <SelectItem className="rounded-xl" value="low_high">low_high</SelectItem>
+                                                    <SelectItem className="rounded-xl" value="openrouter">openrouter</SelectItem>
+                                                    <SelectItem className="rounded-xl" value="zen">zen</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    ) : null}
                                 </>
                             ) : null}
 
                         </div>
+
+                        {formData.type === ChannelType.OpenAIChat &&
+                            (formData.codex_compat.reasoning_param ?? 'reasoning_effort') === 'reasoning_effort' &&
+                            effortValueMode === 'zen' &&
+                            configuredModels.length > 0 ? (
+                            <div className="space-y-3">
+                                <label className="text-sm font-medium text-card-foreground">
+                                    {t('codexReasoningLevels')}
+                                </label>
+                                <div className="space-y-2">
+                                    {configuredModels.map((model) => (
+                                        <div key={model} className="grid grid-cols-1 md:grid-cols-[minmax(0,220px)_1fr] gap-2">
+                                            <div className="flex min-h-10 items-center rounded-xl border border-border bg-muted/30 px-3 text-xs text-muted-foreground">
+                                                <span className="truncate">{model}</span>
+                                            </div>
+                                            <Input
+                                                type="text"
+                                                value={(formData.codex_compat.model_reasoning_levels?.[model] ?? []).join(',')}
+                                                onChange={(e) => updateModelReasoningLevels(model, e.target.value)}
+                                                placeholder={t('codexReasoningLevelsPlaceholder')}
+                                                className="rounded-xl"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
 
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">

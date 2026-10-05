@@ -128,6 +128,115 @@ func TestApplyCodexCompatReasoningParamMappings(t *testing.T) {
 	}
 }
 
+func TestApplyCodexReasoningEffortModes(t *testing.T) {
+	tests := []struct {
+		name       string
+		mode       string
+		effort     string
+		wantEffort string
+	}{
+		{name: "passthrough keeps known effort", mode: "passthrough", effort: "ultra", wantEffort: "ultra"},
+		{name: "passthrough drops unknown effort", mode: "passthrough", effort: "bogus", wantEffort: ""},
+		{name: "deepseek clamps deepest effort", mode: "deepseek", effort: "xhigh", wantEffort: "max"},
+		{name: "deepseek promotes ordinary effort", mode: "deepseek", effort: "medium", wantEffort: "high"},
+		{name: "low high clamps low", mode: "low_high", effort: "minimal", wantEffort: "low"},
+		{name: "low high clamps high", mode: "low_high", effort: "max", wantEffort: "high"},
+		{name: "openrouter clamps max", mode: "openrouter", effort: "max", wantEffort: "xhigh"},
+		{name: "openrouter keeps medium", mode: "openrouter", effort: "medium", wantEffort: "medium"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := &transformerModel.InternalLLMRequest{
+				Model:           "test-model",
+				ReasoningEffort: tt.effort,
+			}
+			applyCodexReasoningParam(&dbmodel.CodexCompatConfig{
+				ReasoningParam:  "reasoning_effort",
+				EffortValueMode: tt.mode,
+			}, request)
+			if request.ReasoningEffort != tt.wantEffort {
+				t.Fatalf("expected effort %q, got %q", tt.wantEffort, request.ReasoningEffort)
+			}
+			if request.ReasoningEffortObject != nil {
+				t.Fatalf("expected no reasoning object, got %#v", request.ReasoningEffortObject)
+			}
+		})
+	}
+}
+
+func TestApplyCodexZenReasoningEffortUsesModelLevels(t *testing.T) {
+	config := &dbmodel.CodexCompatConfig{
+		ReasoningParam:  "reasoning_effort",
+		EffortValueMode: "zen",
+		ModelReasoningLevels: map[string][]string{
+			"deepseek-v4-flash": {"low", "high", "max"},
+			"kimi-k3":           {"max"},
+		},
+	}
+	tests := []struct {
+		model      string
+		effort     string
+		wantEffort string
+	}{
+		{model: "deepseek-v4-flash", effort: "minimal", wantEffort: "low"},
+		{model: "deepseek-v4-flash", effort: "medium", wantEffort: "high"},
+		{model: "deepseek-v4-flash", effort: "ultra", wantEffort: "max"},
+		{model: "provider/kimi-k3", effort: "low", wantEffort: "max"},
+		{model: "provider/kimi-k3", effort: "max", wantEffort: "max"},
+		{model: "unknown-model", effort: "high", wantEffort: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model+"/"+tt.effort, func(t *testing.T) {
+			request := &transformerModel.InternalLLMRequest{
+				Model:           tt.model,
+				ReasoningEffort: tt.effort,
+			}
+			applyCodexReasoningParam(config, request)
+			if request.ReasoningEffort != tt.wantEffort {
+				t.Fatalf("expected effort %q, got %q", tt.wantEffort, request.ReasoningEffort)
+			}
+		})
+	}
+}
+
+func TestApplyCodexOpenRouterReasoningEffortObject(t *testing.T) {
+	request := &transformerModel.InternalLLMRequest{
+		Model:           "openrouter-model",
+		ReasoningEffort: "max",
+	}
+	applyCodexReasoningParam(&dbmodel.CodexCompatConfig{
+		ReasoningParam:  "reasoning_effort",
+		EffortParam:     "reasoning.effort",
+		EffortValueMode: "openrouter",
+	}, request)
+	if request.ReasoningEffort != "" {
+		t.Fatalf("expected top-level effort to be cleared, got %q", request.ReasoningEffort)
+	}
+	if request.ReasoningEffortObject == nil || request.ReasoningEffortObject.Effort != "xhigh" {
+		t.Fatalf("expected reasoning.effort=xhigh, got %#v", request.ReasoningEffortObject)
+	}
+
+	request = &transformerModel.InternalLLMRequest{ReasoningEffort: "none"}
+	applyCodexReasoningParam(&dbmodel.CodexCompatConfig{
+		ReasoningParam: "reasoning_effort",
+		EffortParam:    "reasoning.effort",
+	}, request)
+	if request.ReasoningEffortObject == nil || request.ReasoningEffortObject.Effort != "none" {
+		t.Fatalf("expected explicit reasoning.effort=none, got %#v", request.ReasoningEffortObject)
+	}
+}
+
+func TestApplyCodexReasoningParamRespectsExplicitDisable(t *testing.T) {
+	request := &transformerModel.InternalLLMRequest{ReasoningEffort: "off"}
+	applyCodexReasoningParam(&dbmodel.CodexCompatConfig{ReasoningParam: "thinking"}, request)
+	if request.Thinking == nil || request.Thinking.Type != "disabled" {
+		t.Fatalf("expected thinking disabled, got %#v", request.Thinking)
+	}
+	if request.ReasoningEffort != "" {
+		t.Fatalf("expected original effort to be cleared, got %q", request.ReasoningEffort)
+	}
+}
+
 func TestApplyCodexCompatMoonshotRefSiblings(t *testing.T) {
 	channel := &dbmodel.Channel{
 		BaseUrls: []dbmodel.BaseUrl{{URL: "https://api.moonshot.cn/v1"}},

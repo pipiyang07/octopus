@@ -117,6 +117,15 @@ type CodexCompatConfig struct {
 	// ReasoningParam selects the Chat-side reasoning knob:
 	// reasoning_effort, thinking, enable_thinking, or reasoning_split.
 	ReasoningParam string `json:"reasoning_param,omitempty"`
+	// EffortParam selects the reasoning-effort wire field when ReasoningParam
+	// is reasoning_effort: reasoning_effort, reasoning.effort, or none.
+	EffortParam string `json:"effort_param,omitempty"`
+	// EffortValueMode maps and clamps Codex effort values for a channel.
+	// Supported modes: passthrough, deepseek, low_high, openrouter, and zen.
+	EffortValueMode string `json:"effort_value_mode,omitempty"`
+	// ModelReasoningLevels declares valid effort levels per upstream model.
+	// It is consumed by the zen mode; empty or missing models omit effort.
+	ModelReasoningLevels map[string][]string `json:"model_reasoning_levels,omitempty"`
 }
 
 type BaseUrl struct {

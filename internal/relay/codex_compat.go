@@ -89,27 +89,211 @@ func applyCodexReasoningParam(config *dbmodel.CodexCompatConfig, request *transf
 	if config == nil || request == nil {
 		return
 	}
-	param := strings.TrimSpace(config.ReasoningParam)
-	if param == "" || param == "reasoning_effort" {
-		return
-	}
 	if request.ReasoningEffort == "" && request.ReasoningBudget == nil {
 		return
 	}
 
+	param := strings.TrimSpace(config.ReasoningParam)
+	reasoningEnabled := !codexReasoningExplicitlyDisabled(request.ReasoningEffort)
 	switch param {
 	case "thinking":
-		request.Thinking = &transformerModel.ThinkingConfig{Type: "enabled"}
+		request.Thinking = &transformerModel.ThinkingConfig{Type: codexReasoningState(reasoningEnabled)}
 	case "enable_thinking":
-		enabled := true
+		enabled := reasoningEnabled
 		request.EnableThinking = &enabled
 	case "reasoning_split":
-		enabled := true
+		enabled := reasoningEnabled
 		request.ReasoningSplit = &enabled
+		request.ReasoningEffort = ""
+		request.ReasoningEffortObject = nil
+	case "none":
+		request.ReasoningEffort = ""
+		request.ReasoningEffortObject = nil
+	case "", "reasoning_effort":
+		applyCodexReasoningEffort(config, request)
 	default:
 		return
 	}
+	if param != "" && param != "reasoning_effort" {
+		request.ReasoningEffort = ""
+		request.ReasoningEffortObject = nil
+	}
+}
+
+func applyCodexReasoningEffort(config *dbmodel.CodexCompatConfig, request *transformerModel.InternalLLMRequest) {
+	effortParam := strings.TrimSpace(config.EffortParam)
+	if effortParam == "" {
+		effortParam = "reasoning_effort"
+	}
+	if effortParam == "none" {
+		request.ReasoningEffort = ""
+		request.ReasoningEffortObject = nil
+		return
+	}
+
+	explicitDisabled := codexReasoningExplicitlyDisabled(request.ReasoningEffort)
+	mapped := mapCodexReasoningEffort(
+		request.ReasoningEffort,
+		strings.TrimSpace(config.EffortValueMode),
+		codexModelReasoningLevels(config, request.Model),
+	)
 	request.ReasoningEffort = ""
+	request.ReasoningEffortObject = nil
+	if explicitDisabled && effortParam == "reasoning.effort" {
+		request.ReasoningEffortObject = &transformerModel.ReasoningEffortObject{Effort: "none"}
+		return
+	}
+	if mapped == "" {
+		return
+	}
+	if effortParam == "reasoning.effort" {
+		request.ReasoningEffortObject = &transformerModel.ReasoningEffortObject{Effort: mapped}
+		return
+	}
+	if effortParam == "reasoning_effort" {
+		request.ReasoningEffort = mapped
+	}
+}
+
+func codexReasoningExplicitlyDisabled(effort string) bool {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "none", "off", "disabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func codexReasoningState(enabled bool) string {
+	if enabled {
+		return "enabled"
+	}
+	return "disabled"
+}
+
+func codexModelReasoningLevels(config *dbmodel.CodexCompatConfig, modelName string) []string {
+	if config == nil || len(config.ModelReasoningLevels) == 0 {
+		return nil
+	}
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	if levels, ok := config.ModelReasoningLevels[modelName]; ok {
+		return levels
+	}
+	if slash := strings.LastIndexByte(modelName, '/'); slash >= 0 {
+		if levels, ok := config.ModelReasoningLevels[modelName[slash+1:]]; ok {
+			return levels
+		}
+	}
+	return nil
+}
+
+func mapCodexReasoningEffort(effort, mode string, levels []string) string {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if codexReasoningExplicitlyDisabled(effort) {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "passthrough":
+		switch effort {
+		case "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+			return effort
+		default:
+			return ""
+		}
+	case "deepseek":
+		switch effort {
+		case "max", "xhigh", "ultra":
+			return "max"
+		default:
+			return "high"
+		}
+	case "low_high":
+		switch effort {
+		case "minimal", "low":
+			return "low"
+		default:
+			return "high"
+		}
+	case "openrouter":
+		switch effort {
+		case "max", "xhigh", "ultra":
+			return "xhigh"
+		case "high", "medium", "low", "minimal":
+			return effort
+		default:
+			return ""
+		}
+	case "zen":
+		return clampZenReasoningEffort(effort, levels)
+	default:
+		return ""
+	}
+}
+
+func clampZenReasoningEffort(effort string, levels []string) string {
+	requested, ok := zenReasoningEffortRank(effort)
+	if !ok {
+		return ""
+	}
+	closestAtOrAboveRank := -1
+	closestAtOrAbove := ""
+	highestBelowRank := -1
+	highestBelow := ""
+	anyValid := false
+	anyValidLevel := ""
+	anyValidRank := -1
+
+	for _, level := range levels {
+		rank, ok := zenReasoningEffortRank(level)
+		if !ok {
+			continue
+		}
+		normalized := strings.ToLower(strings.TrimSpace(level))
+		if !anyValid || rank < anyValidRank {
+			anyValid = true
+			anyValidRank = rank
+			anyValidLevel = normalized
+		}
+		if rank >= requested && (closestAtOrAboveRank < 0 || rank < closestAtOrAboveRank) {
+			closestAtOrAboveRank = rank
+			closestAtOrAbove = normalized
+		}
+		if rank < requested && rank > highestBelowRank {
+			highestBelowRank = rank
+			highestBelow = normalized
+		}
+	}
+	if closestAtOrAbove != "" {
+		return closestAtOrAbove
+	}
+	if highestBelow != "" {
+		return highestBelow
+	}
+	if anyValid {
+		return anyValidLevel
+	}
+	return ""
+}
+
+func zenReasoningEffortRank(effort string) (int, bool) {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "minimal":
+		return 0, true
+	case "low":
+		return 1, true
+	case "medium":
+		return 2, true
+	case "high":
+		return 3, true
+	case "xhigh":
+		return 4, true
+	case "max":
+		return 5, true
+	case "ultra":
+		return 6, true
+	default:
+		return 0, false
+	}
 }
 
 func moonshotHostRequiresRefSiblingAllOf(rawBaseURL string) bool {

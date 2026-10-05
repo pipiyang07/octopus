@@ -31,6 +31,9 @@ export type ChannelWSMode = 'inherit' | 'off' | 'passthrough' | 'transform';
 export type CodexCompatConfig = {
     prompt_cache_routing?: 'auto' | 'enabled' | 'disabled';
     reasoning_param?: 'reasoning_effort' | 'thinking' | 'enable_thinking' | 'reasoning_split';
+    effort_param?: 'reasoning_effort' | 'reasoning.effort' | 'none';
+    effort_value_mode?: 'passthrough' | 'deepseek' | 'low_high' | 'openrouter' | 'zen';
+    model_reasoning_levels?: Record<string, string[]>;
 };
 
 export type BaseUrl = {
