@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	openaiInbound "github.com/bestruirui/octopus/internal/transformer/inbound/openai"
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
 	openaiOutbound "github.com/bestruirui/octopus/internal/transformer/outbound/openai"
 )
@@ -185,11 +186,50 @@ func (s *wsConversationState) BuildReplayRequest(req *transformerModel.InternalL
 
 	replayed.SetOpenAIRawInputItems(mergedRawInputItems)
 	replayed.TransformOptions.ArrayInputs = boolPtr(true)
+	mergedMessages, err := openaiInbound.MessagesFromResponsesInputItems(mergedRawInputItems)
+	if err != nil {
+		return nil
+	}
+	replayed.Messages = mergeReplayMessages(retainInstructionMessages(req.Messages), mergedMessages)
 	if replayed.TransformerMetadata == nil {
 		replayed.TransformerMetadata = map[string]string{}
 	}
 	replayed.MarkOpenAIExactReplayRequest()
 	return replayed
+}
+
+func mergeReplayMessages(instructions, merged []transformerModel.Message) []transformerModel.Message {
+	result := make([]transformerModel.Message, 0, len(instructions)+len(merged))
+	for _, instruction := range instructions {
+		result = append(result, cloneMessage(instruction))
+	}
+	result = append(result, merged...)
+	return dedupeReplayInstructionMessages(result)
+}
+
+func dedupeReplayInstructionMessages(messages []transformerModel.Message) []transformerModel.Message {
+	result := make([]transformerModel.Message, 0, len(messages))
+	for _, message := range messages {
+		if (message.Role == "system" || message.Role == "developer") &&
+			replayMessagesContainEquivalent(result, message) {
+			continue
+		}
+		result = append(result, message)
+	}
+	return result
+}
+
+func replayMessagesContainEquivalent(messages []transformerModel.Message, candidate transformerModel.Message) bool {
+	for _, message := range messages {
+		if message.Role != candidate.Role {
+			continue
+		}
+		if message.Content.Content != nil && candidate.Content.Content != nil &&
+			*message.Content.Content == *candidate.Content.Content {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *wsConversationState) ApplySuccessfulTurn(req *transformerModel.InternalLLMRequest, resp *transformerModel.InternalLLMResponse) {

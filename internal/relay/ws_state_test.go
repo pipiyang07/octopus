@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	transformerModel "github.com/bestruirui/octopus/internal/transformer/model"
@@ -494,6 +495,16 @@ func TestWSConversationStateApplySuccessfulChatToolTurnBuildsReplayWindow(t *tes
 	}
 	if items[2]["type"] != "function_call_output" {
 		t.Fatalf("expected tool output to be retained, got %#v", items[2])
+	}
+	var roles []string
+	for _, message := range replayed.Messages {
+		roles = append(roles, message.Role)
+	}
+	if strings.Join(roles, ",") != "user,assistant,tool" {
+		t.Fatalf("expected replay messages to contain the full turn, got roles=%v messages=%#v", roles, replayed.Messages)
+	}
+	if len(replayed.Messages[1].ToolCalls) != 1 || replayed.Messages[1].ToolCalls[0].ID != "call_chat_tool" {
+		t.Fatalf("expected replayed assistant tool call, got %#v", replayed.Messages[1])
 	}
 }
 

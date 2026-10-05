@@ -1627,6 +1627,10 @@ func messageHasVisibleContent(message *model.Message) bool {
 }
 
 func (i *ResponseInbound) MessagesFromRawInputItems(raw json.RawMessage) ([]model.Message, error) {
+	return MessagesFromResponsesInputItems(raw)
+}
+
+func MessagesFromResponsesInputItems(raw json.RawMessage) ([]model.Message, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
