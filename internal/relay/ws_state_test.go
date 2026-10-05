@@ -311,8 +311,10 @@ func TestWSConversationStateBuildReplayRequest(t *testing.T) {
 	if replayed.Conversation != nil {
 		t.Fatalf("expected replay request to clear conversation state")
 	}
-	if len(replayed.Messages) != 0 {
-		t.Fatalf("expected replay request to rely on raw item window instead of transcript messages, got %d messages", len(replayed.Messages))
+	var replayMessages []transformerModel.Message
+	replayMessages = append(replayMessages, replayed.Messages...)
+	if len(replayMessages) != 3 {
+		t.Fatalf("expected raw replay items to rebuild assistant, tool, and user messages, got %#v", replayMessages)
 	}
 	if replayed.TransformOptions.ArrayInputs == nil || !*replayed.TransformOptions.ArrayInputs {
 		t.Fatalf("expected replay request to force array input semantics")
@@ -332,6 +334,15 @@ func TestWSConversationStateBuildReplayRequest(t *testing.T) {
 	}
 	if rawItems[0]["type"] != "function_call" {
 		t.Fatalf("expected replay window tool call to be preserved, got %#v", rawItems[0])
+	}
+	if replayMessages[0].Role != "assistant" || len(replayMessages[0].ToolCalls) != 1 || replayMessages[0].ToolCalls[0].ID != "call_123" {
+		t.Fatalf("expected rebuilt assistant tool call, got %#v", replayMessages[0])
+	}
+	if replayMessages[1].Role != "tool" || replayMessages[1].ToolCallID == nil || *replayMessages[1].ToolCallID != "call_123" {
+		t.Fatalf("expected rebuilt tool result, got %#v", replayMessages[1])
+	}
+	if replayMessages[2].Role != "user" || replayMessages[2].Content.Content == nil || *replayMessages[2].Content.Content != "tail" {
+		t.Fatalf("expected rebuilt trailing user message, got %#v", replayMessages[2])
 	}
 	if _, ok := rawItems[2]["native_meta"]; !ok {
 		t.Fatalf("expected original raw input item native fields to be preserved, got %#v", rawItems[2])
@@ -396,8 +407,14 @@ func TestWSConversationStateBuildReplayRequestForReplayPendingToolOutput(t *test
 	if replayed.PreviousResponseID != nil {
 		t.Fatalf("expected replay request to clear previous_response_id")
 	}
-	if len(replayed.Messages) != 0 {
-		t.Fatalf("expected replay request to avoid transcript messages once replay window exists, got %d", len(replayed.Messages))
+	if len(replayed.Messages) != 2 {
+		t.Fatalf("expected replay window to rebuild assistant and tool messages, got %#v", replayed.Messages)
+	}
+	if replayed.Messages[0].Role != "assistant" || len(replayed.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("expected rebuilt assistant tool call, got %#v", replayed.Messages[0])
+	}
+	if replayed.Messages[1].Role != "tool" || replayed.Messages[1].ToolCallID == nil || *replayed.Messages[1].ToolCallID != "call_123" {
+		t.Fatalf("expected rebuilt tool result, got %#v", replayed.Messages[1])
 	}
 	if replayed.TransformerMetadata[transformerModel.TransformerMetadataWSExecutionMode] != transformerModel.TransformerMetadataWSExecutionModeReplayExact {
 		t.Fatalf("expected replay-pending request to be marked replay_exact, got %#v", replayed.TransformerMetadata)
@@ -580,7 +597,7 @@ func TestWSConversationStateApplySuccessfulStreamTurnBuildsReplayWindow(t *testi
 	}
 }
 
-func TestBuildReplayRequestRetainsInstructionMessages(t *testing.T) {
+func TestBuildReplayRequestRetainsInstructionsAndRebuildsHistory(t *testing.T) {
 	state := &wsConversationState{
 		LastResponseID:    "resp_prev",
 		ReplayWindowItems: json.RawMessage(`[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}]`),
@@ -599,11 +616,17 @@ func TestBuildReplayRequestRetainsInstructionMessages(t *testing.T) {
 	if replayed == nil {
 		t.Fatalf("expected replay request to be built")
 	}
-	if len(replayed.Messages) != 2 {
-		t.Fatalf("expected replay request to retain only instruction messages, got %#v", replayed.Messages)
+	if len(replayed.Messages) != 4 {
+		t.Fatalf("expected replay request to retain instructions and rebuild history, got %#v", replayed.Messages)
 	}
 	if replayed.Messages[0].Role != "system" || replayed.Messages[1].Role != "developer" {
 		t.Fatalf("expected replay instruction ordering to be preserved, got %#v", replayed.Messages)
+	}
+	if replayed.Messages[2].Role != "user" || replayed.Messages[2].Content.Content == nil || *replayed.Messages[2].Content.Content != "hello" {
+		t.Fatalf("expected rebuilt historical user message, got %#v", replayed.Messages[2])
+	}
+	if replayed.Messages[3].Role != "user" || replayed.Messages[3].Content.Content == nil || *replayed.Messages[3].Content.Content != "drop from messages" {
+		t.Fatalf("expected current user message to be rebuilt, got %#v", replayed.Messages[3])
 	}
 }
 

@@ -1659,8 +1659,12 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, []model.MessageC
 
 	switch item.Type {
 	case "message", "input_text", "":
+		role := item.Role
+		if role == "" {
+			role = "user"
+		}
 		msg := &model.Message{
-			Role: item.Role,
+			Role: role,
 		}
 
 		if item.Content != nil && len(item.Content.Items) > 0 && item.isOutputMessageContent() {
