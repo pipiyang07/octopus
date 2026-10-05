@@ -46,21 +46,25 @@ func TestResponsesToolOutputMovesSupportedMediaToUserMessage(t *testing.T) {
 	}
 
 	mediaMessage := request.Messages[2]
-	if mediaMessage.Role != "user" || len(mediaMessage.Content.MultipleContent) != 3 {
+	if mediaMessage.Role != "user" || len(mediaMessage.Content.MultipleContent) != 4 {
 		t.Fatalf("unexpected synthetic media message: %#v", mediaMessage)
 	}
-	image := mediaMessage.Content.MultipleContent[0]
+	if mediaMessage.Content.MultipleContent[0].Type != "text" ||
+		!strings.Contains(*mediaMessage.Content.MultipleContent[0].Text, "media output of tool call call_media") {
+		t.Fatalf("expected media call marker, got %#v", mediaMessage.Content.MultipleContent[0])
+	}
+	image := mediaMessage.Content.MultipleContent[1]
 	if image.Type != "image_url" || image.ImageURL == nil || !strings.HasPrefix(image.ImageURL.URL, "data:image/png;base64,") {
 		t.Fatalf("unexpected image part: %#v", image)
 	}
 	if image.ImageURL.Detail == nil || *image.ImageURL.Detail != "auto" {
 		t.Fatalf("expected original detail to be downgraded to auto, got %#v", image.ImageURL.Detail)
 	}
-	file := mediaMessage.Content.MultipleContent[1]
+	file := mediaMessage.Content.MultipleContent[2]
 	if file.Type != "file" || file.File == nil || file.File.FileID != "file_123" || file.File.Filename != "report.pdf" {
 		t.Fatalf("unexpected file part: %#v", file)
 	}
-	audio := mediaMessage.Content.MultipleContent[2]
+	audio := mediaMessage.Content.MultipleContent[3]
 	if audio.Type != "input_audio" || audio.Audio == nil || audio.Audio.Data != "AUDIO_SENTINEL" || audio.Audio.Format != "wav" {
 		t.Fatalf("unexpected audio part: %#v", audio)
 	}
@@ -109,10 +113,12 @@ func TestResponsesCustomToolOutputClampsResidualLargeMedia(t *testing.T) {
 	}
 
 	mediaMessage := request.Messages[2]
-	if mediaMessage.Role != "user" || len(mediaMessage.Content.MultipleContent) != 1 ||
-		mediaMessage.Content.MultipleContent[0].Type != "image_url" ||
-		mediaMessage.Content.MultipleContent[0].ImageURL == nil ||
-		mediaMessage.Content.MultipleContent[0].ImageURL.URL != "data:image/png;base64,CUSTOM_SENTINEL" {
+	if mediaMessage.Role != "user" || len(mediaMessage.Content.MultipleContent) != 2 ||
+		mediaMessage.Content.MultipleContent[0].Type != "text" ||
+		!strings.Contains(*mediaMessage.Content.MultipleContent[0].Text, "media output of tool call call_custom") ||
+		mediaMessage.Content.MultipleContent[1].Type != "image_url" ||
+		mediaMessage.Content.MultipleContent[1].ImageURL == nil ||
+		mediaMessage.Content.MultipleContent[1].ImageURL.URL != "data:image/png;base64,CUSTOM_SENTINEL" {
 		t.Fatalf("unexpected moved image: %#v", mediaMessage)
 	}
 }

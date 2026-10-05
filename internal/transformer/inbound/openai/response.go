@@ -1518,21 +1518,49 @@ func convertInputToMessages(input *ResponsesInput) ([]model.Message, error) {
 	// Array of items
 	messages := make([]model.Message, 0, len(input.Items))
 	var pendingToolMedia []model.MessageContentPart
+	pendingReasoning := ""
+	lastAssistantIndex := -1
 	for _, item := range input.Items {
-		if !isResponsesToolOutputItem(item.Type) && len(pendingToolMedia) > 0 {
+		if shouldFlushResponsesToolMediaBeforeItem(&item) && len(pendingToolMedia) > 0 {
 			messages = append(messages, syntheticToolMediaMessage(pendingToolMedia))
 			pendingToolMedia = nil
+		}
+		if item.Type == "reasoning" {
+			pendingReasoning = appendResponsesReasoningText(pendingReasoning, responsesReasoningItemText(&item))
+			continue
 		}
 		msg, mediaParts, err := convertItemToMessage(&item)
 		if err != nil {
 			return nil, err
 		}
 		if msg != nil {
+			if msg.Role == "assistant" {
+				attachResponsesPendingReasoning(msg, pendingReasoning)
+				pendingReasoning = ""
+			} else if pendingReasoning != "" && !isResponsesToolOutputItem(item.Type) && lastAssistantIndex >= 0 {
+				attachResponsesPendingReasoning(&messages[lastAssistantIndex], pendingReasoning)
+				pendingReasoning = ""
+			}
 			messages = append(messages, *msg)
+			switch msg.Role {
+			case "assistant":
+				lastAssistantIndex = len(messages) - 1
+			case "tool":
+				// Tool results stay attached to the preceding assistant turn.
+			default:
+				lastAssistantIndex = -1
+			}
 		}
 		if len(mediaParts) > 0 {
+			pendingToolMedia = append(pendingToolMedia, model.MessageContentPart{
+				Type: "text",
+				Text: lo.ToPtr("[octopus: media output of tool call " + item.CallID + "]"),
+			})
 			pendingToolMedia = append(pendingToolMedia, mediaParts...)
 		}
+	}
+	if pendingReasoning != "" && lastAssistantIndex >= 0 {
+		attachResponsesPendingReasoning(&messages[lastAssistantIndex], pendingReasoning)
 	}
 	if len(pendingToolMedia) > 0 {
 		messages = append(messages, syntheticToolMediaMessage(pendingToolMedia))
@@ -1572,6 +1600,9 @@ func canCoalesceResponsesAssistantMessages(previous, current *model.Message) boo
 	}
 	previousHasCalls := len(previous.ToolCalls) > 0
 	currentHasCalls := len(current.ToolCalls) > 0
+	if previousHasCalls && currentHasCalls {
+		return true
+	}
 	if !previousHasCalls && currentHasCalls {
 		return true
 	}
@@ -1643,6 +1674,54 @@ func MessagesFromResponsesInputItems(raw json.RawMessage) ([]model.Message, erro
 
 func isResponsesToolOutputItem(itemType string) bool {
 	return itemType == "function_call_output" || itemType == "custom_tool_call_output" || itemType == "tool_search_output"
+}
+
+func shouldFlushResponsesToolMediaBeforeItem(item *ResponsesItem) bool {
+	if item == nil {
+		return false
+	}
+	if isResponsesToolOutputItem(item.Type) || item.Type == "reasoning" {
+		return false
+	}
+	switch item.Type {
+	case "", "message", "input_text", "input_image", "input_file", "input_audio",
+		"function_call", "custom_tool_call", "tool_search_call":
+		return true
+	}
+	return item.Role != "" || item.Content != nil
+}
+
+func responsesReasoningItemText(item *ResponsesItem) string {
+	if item == nil {
+		return ""
+	}
+	var reasoning strings.Builder
+	for _, summary := range item.Summary {
+		reasoning.WriteString(summary.Text)
+	}
+	return reasoning.String()
+}
+
+func appendResponsesReasoningText(existing, addition string) string {
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return addition
+	}
+	return strings.TrimSpace(existing) + "\n\n" + addition
+}
+
+func attachResponsesPendingReasoning(message *model.Message, reasoning string) {
+	if message == nil || strings.TrimSpace(reasoning) == "" {
+		return
+	}
+	existing := ""
+	if message.ReasoningContent != nil {
+		existing = *message.ReasoningContent
+	}
+	message.ReasoningContent = lo.ToPtr(appendResponsesReasoningText(existing, reasoning))
 }
 
 func syntheticToolMediaMessage(parts []model.MessageContentPart) model.Message {
@@ -1807,13 +1886,45 @@ func convertItemToMessage(item *ResponsesItem) (*model.Message, []model.MessageC
 
 func rawJSONString(raw json.RawMessage) string {
 	if len(raw) == 0 {
-		return ""
+		return "{}"
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err == nil {
-		return value
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return "{}"
+		}
+		return canonicalJSONStringIfParseable(trimmed)
 	}
-	return string(raw)
+	var parsed any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&parsed); err != nil {
+		return string(raw)
+	}
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		return string(raw)
+	}
+	return string(encoded)
+}
+
+func canonicalJSONStringIfParseable(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || !json.Valid([]byte(trimmed)) {
+		return text
+	}
+	var parsed any
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	if err := decoder.Decode(&parsed); err != nil {
+		return text
+	}
+	encoded, err := json.Marshal(parsed)
+	if err != nil {
+		return text
+	}
+	return string(encoded)
 }
 
 func parseResponsesInput(raw json.RawMessage) (*ResponsesInput, error) {

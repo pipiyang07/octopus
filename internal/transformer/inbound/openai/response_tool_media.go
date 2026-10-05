@@ -42,7 +42,7 @@ func planResponsesToolOutput(raw json.RawMessage) (string, []model.MessageConten
 		}
 		transformed, mediaParts, changed := stripResponsesToolMedia(nested, 0)
 		if !changed {
-			return text, nil, nil
+			return canonicalJSONStringIfParseable(trimmed), nil, nil
 		}
 		clampResponsesMediaAdjacentStrings(transformed)
 		rewritten, err := json.Marshal(transformed)
