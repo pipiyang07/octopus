@@ -438,6 +438,65 @@ func TestWSConversationStateApplySuccessfulTurn(t *testing.T) {
 	}
 }
 
+func TestWSConversationStateApplySuccessfulChatToolTurnBuildsReplayWindow(t *testing.T) {
+	state := &wsConversationState{}
+	request := &transformerModel.InternalLLMRequest{
+		Model: "kimi-k3",
+		Messages: []transformerModel.Message{{
+			Role:    "user",
+			Content: transformerModel.MessageContent{Content: stringPtr("run the tool")},
+		}},
+	}
+	response := &transformerModel.InternalLLMResponse{
+		ID: "chatcmpl_tool_turn",
+		Choices: []transformerModel.Choice{{
+			Index: 0,
+			Message: &transformerModel.Message{
+				Role: "assistant",
+				ToolCalls: []transformerModel.ToolCall{{
+					ID:   "call_chat_tool",
+					Type: "function",
+					Function: transformerModel.FunctionCall{
+						Name:      "echo",
+						Arguments: `{"text":"ok"}`,
+					},
+				}},
+			},
+		}},
+	}
+
+	state.ApplySuccessfulTurn(request, response)
+	nextRequest := &transformerModel.InternalLLMRequest{
+		Model:              "kimi-k3",
+		PreviousResponseID: stringPtr("chatcmpl_tool_turn"),
+		RawInputItems: json.RawMessage(`[
+			{"type":"function_call_output","call_id":"call_chat_tool","output":"ok"}
+		]`),
+		Messages: []transformerModel.Message{{
+			Role:       "tool",
+			ToolCallID: stringPtr("call_chat_tool"),
+			Content:    transformerModel.MessageContent{Content: stringPtr("ok")},
+		}},
+	}
+	replayed := state.BuildReplayRequest(nextRequest)
+	if replayed == nil {
+		t.Fatal("expected replay request to be built")
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(replayed.RawInputItems, &items); err != nil {
+		t.Fatalf("unmarshal replay items: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected user prompt, assistant tool call, and tool output, got %#v", items)
+	}
+	if items[1]["type"] != "function_call" || items[1]["call_id"] != "call_chat_tool" {
+		t.Fatalf("expected assistant tool call to precede tool output, got %#v", items[1])
+	}
+	if items[2]["type"] != "function_call_output" {
+		t.Fatalf("expected tool output to be retained, got %#v", items[2])
+	}
+}
+
 func TestWSConversationStateApplySuccessfulStreamTurnBuildsReplayWindow(t *testing.T) {
 	state := &wsConversationState{}
 	request := &transformerModel.InternalLLMRequest{

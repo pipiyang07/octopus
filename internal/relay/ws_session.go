@@ -458,10 +458,21 @@ func buildNextReplayWindow(existing json.RawMessage, req *transformerModel.Inter
 	if len(base) == 0 {
 		return nil, false
 	}
-	if len(resp.RawResponsesOutputItems) == 0 {
+	responseItems := resp.RawResponsesOutputItems
+	if len(responseItems) == 0 {
+		// Chat upstreams do not provide native Responses output items. Rebuild
+		// the model turn from the internal assistant messages so later
+		// tool_call_output requests still contain the original tool call.
+		assistantItems, err := openaiOutbound.MarshalResponsesInputItems(assistantMessagesFromResponse(resp))
+		if err != nil {
+			return nil, false
+		}
+		responseItems = assistantItems
+	}
+	if len(responseItems) == 0 {
 		return base, true
 	}
-	return mergeRawJSONArray(base, resp.RawResponsesOutputItems)
+	return mergeRawJSONArray(base, responseItems)
 }
 
 func mergeRawJSONArray(parts ...json.RawMessage) (json.RawMessage, bool) {
