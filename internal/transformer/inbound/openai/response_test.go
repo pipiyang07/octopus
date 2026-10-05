@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -51,6 +52,91 @@ func TestConvertToInternalRequestMarksPassthroughForUnsupportedToolType(t *testi
 	}
 	if ext := internalReq.GetOpenAIExtensions(); !ext.ResponsesPassthroughRequired || ext.ResponsesPassthroughReason != "tool:apply_patch" {
 		t.Fatalf("expected OpenAI extension passthrough view, got %#v", ext)
+	}
+}
+
+func TestConvertToInternalRequestCoalescesResponsesAssistantToolTurn(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "kimi-k3",
+		Input: ResponsesInput{Items: []ResponsesItem{
+			{
+				Type: "reasoning",
+				Summary: []ResponsesReasoningSummary{{
+					Type: "summary_text",
+					Text: "Need the shell result.",
+				}},
+			},
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: &ResponsesInput{Items: []ResponsesItem{
+					{Type: "output_text", Text: stringPtr("Running the command.")},
+				}},
+			},
+			{
+				Type:      "function_call",
+				CallID:    "call_kimi",
+				Name:      "exec_command",
+				Arguments: json.RawMessage(`{"cmd":"pwd"}`),
+			},
+			{
+				Type:      "function_call_output",
+				CallID:    "call_kimi",
+				RawOutput: json.RawMessage(`"/tmp"`),
+			},
+		}},
+	}
+
+	internalReq, err := convertToInternalRequest(req)
+	if err != nil {
+		t.Fatalf("convertToInternalRequest failed: %v", err)
+	}
+	var roles []string
+	for _, message := range internalReq.Messages {
+		roles = append(roles, message.Role)
+	}
+	if strings.Join(roles, ",") != "assistant,tool" {
+		t.Fatalf("expected one assistant tool-call message followed by tool result, got roles=%v messages=%#v", roles, internalReq.Messages)
+	}
+	assistant := internalReq.Messages[0]
+	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_kimi" {
+		t.Fatalf("expected tool call to be retained, got %#v", assistant)
+	}
+	if assistant.Content.Content == nil || *assistant.Content.Content != "Running the command." {
+		t.Fatalf("expected commentary text to stay on the assistant message, got %#v", assistant.Content)
+	}
+	if assistant.ReasoningContent == nil || !strings.Contains(*assistant.ReasoningContent, "Need the shell result.") {
+		t.Fatalf("expected reasoning to attach to the tool-call turn, got %#v", assistant.ReasoningContent)
+	}
+}
+
+func TestConvertToInternalRequestBackfillsAssistantToolCallReasoning(t *testing.T) {
+	req := &ResponsesRequest{
+		Model: "kimi-k3",
+		Input: ResponsesInput{Items: []ResponsesItem{
+			{
+				Type:      "function_call",
+				CallID:    "call_no_reasoning",
+				Name:      "echo",
+				Arguments: json.RawMessage(`{"text":"ok"}`),
+			},
+			{
+				Type:      "function_call_output",
+				CallID:    "call_no_reasoning",
+				RawOutput: json.RawMessage(`"ok"`),
+			},
+		}},
+	}
+
+	internalReq, err := convertToInternalRequest(req)
+	if err != nil {
+		t.Fatalf("convertToInternalRequest failed: %v", err)
+	}
+	if len(internalReq.Messages) != 2 || internalReq.Messages[0].Role != "assistant" {
+		t.Fatalf("expected assistant tool call and tool output, got %#v", internalReq.Messages)
+	}
+	if internalReq.Messages[0].ReasoningContent == nil || strings.TrimSpace(*internalReq.Messages[0].ReasoningContent) == "" {
+		t.Fatalf("expected assistant tool call to receive reasoning placeholder, got %#v", internalReq.Messages[0])
 	}
 }
 

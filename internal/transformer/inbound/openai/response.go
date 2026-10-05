@@ -1538,7 +1538,92 @@ func convertInputToMessages(input *ResponsesInput) ([]model.Message, error) {
 		messages = append(messages, syntheticToolMediaMessage(pendingToolMedia))
 	}
 
-	return messages, nil
+	return coalesceResponsesAssistantMessages(messages), nil
+}
+
+// coalesceResponsesAssistantMessages keeps a Responses model turn shaped the
+// way Chat upstreams expect. Codex can send reasoning, commentary, and tool
+// calls as separate items in the same turn; emitting several assistant messages
+// makes some providers treat a text-only progress message as a complete turn.
+// Reasoning-only assistant messages are also rejected by strict Chat gateways.
+func coalesceResponsesAssistantMessages(messages []model.Message) []model.Message {
+	result := make([]model.Message, 0, len(messages))
+	for _, message := range messages {
+		if len(result) > 0 && canCoalesceResponsesAssistantMessages(&result[len(result)-1], &message) {
+			mergeResponsesAssistantMessage(&result[len(result)-1], message)
+			continue
+		}
+		result = append(result, message)
+	}
+
+	for i := range result {
+		if result[i].Role == "assistant" && len(result[i].ToolCalls) > 0 &&
+			(result[i].ReasoningContent == nil || strings.TrimSpace(*result[i].ReasoningContent) == "") {
+			reasoning := "tool call"
+			result[i].ReasoningContent = &reasoning
+		}
+	}
+	return result
+}
+
+func canCoalesceResponsesAssistantMessages(previous, current *model.Message) bool {
+	if previous == nil || current == nil || previous.Role != "assistant" || current.Role != "assistant" {
+		return false
+	}
+	previousHasCalls := len(previous.ToolCalls) > 0
+	currentHasCalls := len(current.ToolCalls) > 0
+	if !previousHasCalls && currentHasCalls {
+		return true
+	}
+	if messageHasOnlyResponsesReasoning(current) {
+		return true
+	}
+	return messageHasOnlyResponsesReasoning(previous) && messageHasVisibleContent(current)
+}
+
+func mergeResponsesAssistantMessage(target *model.Message, source model.Message) {
+	if target == nil {
+		return
+	}
+	target.ToolCalls = append(target.ToolCalls, source.ToolCalls...)
+	if source.Content.Content != nil && target.Content.Content == nil && len(target.Content.MultipleContent) == 0 {
+		target.Content = source.Content
+	} else if len(source.Content.MultipleContent) > 0 && target.Content.Content == nil {
+		target.Content.MultipleContent = append(target.Content.MultipleContent, source.Content.MultipleContent...)
+	}
+	if source.ReasoningContent != nil && strings.TrimSpace(*source.ReasoningContent) != "" {
+		reasoning := *source.ReasoningContent
+		if target.ReasoningContent != nil && strings.TrimSpace(*target.ReasoningContent) != "" {
+			reasoning = strings.TrimSpace(*target.ReasoningContent) + "\n\n" + strings.TrimSpace(reasoning)
+		}
+		target.ReasoningContent = &reasoning
+	}
+	if source.ReasoningSignature != nil && target.ReasoningSignature == nil {
+		target.ReasoningSignature = source.ReasoningSignature
+	}
+}
+
+func messageHasOnlyResponsesReasoning(message *model.Message) bool {
+	if message == nil || message.Role != "assistant" || len(message.ToolCalls) > 0 || messageHasVisibleContent(message) {
+		return false
+	}
+	return (message.ReasoningContent != nil && strings.TrimSpace(*message.ReasoningContent) != "") ||
+		(message.ReasoningSignature != nil && strings.TrimSpace(*message.ReasoningSignature) != "")
+}
+
+func messageHasVisibleContent(message *model.Message) bool {
+	if message == nil {
+		return false
+	}
+	if message.Content.Content != nil && strings.TrimSpace(*message.Content.Content) != "" {
+		return true
+	}
+	for _, part := range message.Content.MultipleContent {
+		if part.Type != "text" || (part.Text != nil && strings.TrimSpace(*part.Text) != "") {
+			return true
+		}
+	}
+	return false
 }
 
 func (i *ResponseInbound) MessagesFromRawInputItems(raw json.RawMessage) ([]model.Message, error) {
