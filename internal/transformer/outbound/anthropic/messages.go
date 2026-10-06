@@ -98,6 +98,13 @@ func (o *MessageOutbound) TransformRequestRaw(ctx context.Context, rawBody []byt
 	if len(rawBody) == 0 {
 		return nil, fmt.Errorf("raw body is empty")
 	}
+	var rawRequestModel struct {
+		Model string `json:"model"`
+	}
+	rawContext1M := false
+	if err := json.Unmarshal(rawBody, &rawRequestModel); err == nil {
+		rawContext1M = strings.HasSuffix(strings.TrimSpace(rawRequestModel.Model), "[1m]")
+	}
 	if strings.TrimSpace(modelName) != "" {
 		rewrittenBody, err := rewriteRawRequestModel(rawBody, modelName)
 		if err != nil {
@@ -125,7 +132,11 @@ func (o *MessageOutbound) TransformRequestRaw(ctx context.Context, rawBody []byt
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Anthropic-Version", "2023-06-01")
-	req.Header.Set("anthropic-beta", DefaultAnthropicPassthroughBeta)
+	betaHeader := DefaultAnthropicPassthroughBeta
+	if rawContext1M && isContext1MEligibleModel(modelName) {
+		betaHeader += ",context-1m-2025-08-07"
+	}
+	req.Header.Set("anthropic-beta", betaHeader)
 	req.Header.Set("X-API-Key", key)
 
 	parsedUrl, err := url.Parse(strings.TrimSuffix(baseUrl, "/"))

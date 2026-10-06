@@ -60,8 +60,13 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 	if anthropicReq.MaxTokens < 1 {
 		anthropicReq.MaxTokens = 1
 	}
+	modelName := strings.TrimSpace(anthropicReq.Model)
+	context1M := strings.HasSuffix(modelName, "[1m]")
+	if context1M {
+		modelName = strings.TrimSuffix(modelName, "[1m]")
+	}
 	chatReq := &model.InternalLLMRequest{
-		Model:               anthropicReq.Model,
+		Model:               modelName,
 		MaxTokens:           &anthropicReq.MaxTokens,
 		Temperature:         anthropicReq.Temperature,
 		TopP:                anthropicReq.TopP,
@@ -70,6 +75,9 @@ func (i *MessagesInbound) TransformRequest(ctx context.Context, body []byte) (*m
 		Metadata:            map[string]string{},
 		RawAPIFormat:        model.APIFormatAnthropicMessage,
 		TransformerMetadata: map[string]string{},
+	}
+	if context1M {
+		chatReq.SetTransformerMetadataValue(model.TransformerMetadataAnthropicContext1M, "true")
 	}
 	if tier := strings.TrimSpace(anthropicReq.ServiceTier); tier != "" {
 		chatReq.ServiceTier = &tier

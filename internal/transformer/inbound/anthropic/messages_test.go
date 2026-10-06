@@ -71,6 +71,26 @@ func TestAnthropicRequestKeepsNonEmptyThinkingAnthropic(t *testing.T) {
 	}
 }
 
+func TestAnthropicRequestStripsOneMContextMarker(t *testing.T) {
+	inbound := &MessagesInbound{}
+	body := []byte(`{
+		"model":"claude-sonnet-4-5[1m]",
+		"max_tokens":16,
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+
+	req, err := inbound.TransformRequest(context.Background(), body)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+	if req.Model != "claude-sonnet-4-5" {
+		t.Fatalf("expected [1m] marker to be stripped, got %q", req.Model)
+	}
+	if !req.TransformerMetadataBool(model.TransformerMetadataAnthropicContext1M) {
+		t.Fatalf("expected context 1m metadata, got %#v", req.TransformerMetadata)
+	}
+}
+
 func TestTransformResponseEmitsGeminiThoughtSignatureShim(t *testing.T) {
 	inbound := &MessagesInbound{}
 	out, err := inbound.TransformResponse(context.Background(), &model.InternalLLMResponse{

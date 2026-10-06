@@ -50,6 +50,44 @@ func TestTransformRequestRawRewritesModel(t *testing.T) {
 	}
 }
 
+func TestTransformRequestRawAddsContext1MBetaFromMarker(t *testing.T) {
+	outbound := &MessageOutbound{}
+	rawBody := []byte(`{
+		"model":"claude-sonnet-4-5[1m]",
+		"max_tokens":16,
+		"messages":[{"role":"user","content":"hello"}]
+	}`)
+
+	req, err := outbound.TransformRequestRaw(
+		context.Background(),
+		rawBody,
+		"claude-sonnet-4-5",
+		"https://example.com/v1",
+		"test-key",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("TransformRequestRaw() error = %v", err)
+	}
+	if !strings.Contains(req.Header.Get("anthropic-beta"), "context-1m-2025-08-07") {
+		t.Fatalf("expected context-1m beta, got %q", req.Header.Get("anthropic-beta"))
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("ReadAll(req.Body) error = %v", err)
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal rewritten body error = %v", err)
+	}
+	if payload.Model != "claude-sonnet-4-5" {
+		t.Fatalf("expected upstream model without marker, got %q", payload.Model)
+	}
+}
+
 // TestCollectBetaHeadersAutomation covers A-H7 — each new signal drives a
 // specific anthropic-beta header. The test is table-driven so adding a
 // future trigger only needs a new row, not a whole test function.
